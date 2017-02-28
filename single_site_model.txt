@@ -1,0 +1,71 @@
+    model
+    {
+    
+
+    # Priors for predation sources of mortality
+    alpha.p ~ dnorm(-4.257, pow(0.609*3,-2))       #informative priors: mean and 3*SD 
+    beta.p.ex ~ dnorm(-2.532, pow(0.272*3,-2))       
+    
+    
+    #priors for abandonment
+    alpha.a ~ dnorm(-7.447, pow(1.351*3,-2))
+    beta.a.ex ~ dnorm(1.284,pow(0.348*3,-2))
+    
+    #priors for flooding
+    
+    alpha.f ~ dnorm(-6.040,pow(1.059*3,-2))
+    
+    
+    # Likelihood
+    for (i in 1:n) {
+    
+    ctf[i] <- exp(alpha.f)
+    ctp[i] <- exp(alpha.p + beta.p.ex*ex[i])
+    cta[i] <- exp(alpha.a + beta.a.ex*ex[i])
+    cts[i] <- 1
+    den[i] <- ctf[i] + ctp[i] + cta[i] + cts[i] 
+    
+    
+    survp[i] <- cts[i]/den[i]
+    
+    
+    
+    p[i,4] <-  ((ctf[i]/(den[i]))/(1-survp[i]))*(1-pow(survp[i],interval[i])) #probability of flooding
+    p[i,2] <-  ((cta[i]/(den[i]))/(1-survp[i]))*(1-pow(survp[i],interval[i])) #probability of abandonment 
+    p[i,3] <-  ((ctp[i]/(den[i]))/(1-survp[i]))*(1-pow(survp[i],interval[i])) #probability of predation 
+    p[i,1] <- pow(survp[i],interval[i])
+    
+    Fate[i,1:4] ~ dmulti( p[i,] , 1 )
+    
+    }
+    #Derived quantities  
+    
+    
+    ctp.ex<-exp(alpha.p+beta.p.ex)
+    cta.ex<-exp(alpha.a+beta.a.ex)
+    ctf.mean<-exp(alpha.f)
+    den.ex<-(ctp.ex+cta.ex+ctf.mean+1)
+    
+    ctp.un<-exp(alpha.p)
+    cta.un<-exp(alpha.a)
+    den.un<-(ctp.un+cta.un+ctf.mean+1)
+    
+    
+    #Period fate probabilities for exclosed nests
+    
+    Survp.ex<-(1/den.ex) #daily
+    Hatchp.ex <- pow(Survp.ex, 34)
+    Abanp.ex<-((cta.ex/den.ex)/(1-Survp.ex))*(1-pow(Survp.ex, 34)) #period
+    Predp.ex<-((ctp.ex/den.ex)/(1-Survp.ex))*(1-pow(Survp.ex, 34))
+    
+    #Period fate probabilties for unexclosed nests
+    
+    Survp.un<-1/den.un #daily
+    Hatchp.un <- pow(Survp.un, 34)
+    Abanp.un<-((cta.un/den.un)/(1-Survp.un))*(1-pow(Survp.un,34))
+    Predp.un<-((ctp.un/den.un)/(1-Survp.un))*(1-pow(Survp.un,34))
+
+    Flood.p <- ((ctf.mean/den.un)/(1-Survp.un))*(1-pow(Survp.un,34))
+    
+    
+    }
