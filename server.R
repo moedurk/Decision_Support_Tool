@@ -386,8 +386,8 @@ shinyServer(
    
     withProgress(message = "Calculating Projections ..", {
 
-      traj.noEx <- lambda.calc(parms=parms(), sd.parms=sd.parms(), n.ex=0, n.iter=1000) #lambda without exclosures
-      traj.Ex <- lambda.calc(parms=parms(), sd.parms=sd.parms(), n.ex=1, n.iter=1000) #lambda with exclosures
+      traj.noEx <- lambda.calc(parms=parms(), sd.parms=sd.parms(), n.ex=0, n.iter=10000) #lambda without exclosures
+      traj.Ex <- lambda.calc(parms=parms(), sd.parms=sd.parms(), n.ex=1, n.iter=10000) #lambda with exclosures
       
       #calculate probabilities of decline and growth
       decline.ex <- mean(traj.Ex$lambda<1)
@@ -508,8 +508,8 @@ observeEvent(input$threshold.data, {
                               
                               parms.scen <- reactive({
                                 list(
-                                  Na0 = (input$Pairs)/2,
-                                  Ns0 = (input$Pairs)/2,
+                                  Na0 = (input$ScenPairs)/2,
+                                  Ns0 = (input$ScenPairs)/2,
                                   yt=0.99,  #probability of third-year bird nesting
                                   ys=0.68,  #probability of second-year bird nesting
                                   Phij=0.52,  
@@ -560,7 +560,7 @@ observeEvent(input$threshold.data, {
                               list(lambda.un=traj.noEx$lambda, lambda.ex=traj.Ex$lambda, decline.ex=decline.ex, 
                                    decline.un=decline.un, decline.steep.ex=decline.steep.ex, decline.steep.un=decline.steep.un,
                                    growth.ex=growth.ex, growth.un=growth.un, growth.steep.ex=growth.steep.ex, 
-                                   growth.steep.un=growth.steep.un)
+                                   growth.steep.un=growth.steep.un, parm.est=parm.est)
                             })
                         }#with progress
   )#event reactive
@@ -571,7 +571,94 @@ observeEvent(input$threshold.data, {
   
   output$warning <- renderText(if(warning()$total.risk >= 100)
     paste("Warning: Predation Risk + Abandonment Risk must = less than 100%"))
+
+  #THRESHOLDS FOR SCENARIO####
+
+  scen.thresholds<-eventReactive(input$Scen.threshold.data, {
+    withProgress(message = "Calculating Thresholds...", {
+      
+      parms.scen.t <- reactive({
+        list(
+          Na0 = (input$ScenPairs)/2,
+          Ns0 = (input$ScenPairs)/2,
+          yt=0.99,  #probability of third-year bird nesting
+          ys=0.68,  #probability of second-year bird nesting
+          Phij=0.52,  
+          Phia=0.74,
+          f=0.4,
+          m=input$mortality/200,
+          E = 0.94,
+          r2 = 0.7,
+          r3 = 0.7,
+          beta.a.ex = mean.parms$beta.a.ex,
+          beta.p.ex = mean.parms$beta.p.ex,
+          alpha.a = scenario()$parm.est[1],
+          alpha.p = scenario()$parm.est[2],
+          alpha.f = mean.parms$alpha.f
+        ) })
+      
+      sd.parms.scen.t <- reactive({
+        list(
+          vcovSurv=matrix(c((logodds(parms.scen.t()$Phij)*CV)^2,logodds(parms.scen.t()$Phij)*CV*logodds(parms.scen.t()$Phia)*CV, 
+                            logodds(parms.scen.t()$Phij)*CV*logodds(parms.scen.t()$Phia)*CV, (logodds(parms.scen.t()$Phia)*CV))^2,2,2),  #had sd in here earlier, not variance
+          sd.f = abs(logodds(parms.scen.t()$f))*0.06,
+          yt = logodds(parms.scen.t()$yt)*CV,
+          ys = logodds(parms.scen.t()$ys)*CV,
+          r2 = abs(logodds(parms.scen.t()$r2))*CV,
+          r3 = abs(logodds(parms.scen.t()$r3))*CV,
+          m = min(abs(logodds(parms.scen.t()$m))*1.04,abs(logodds(parms.scen.t()$m+0.01))*1.04),  #use 0.01 if value of 0 entered
+          alpha.f = sd.parms.init$alpha.f,
+          vcovAban = sd.parms.init$vcovAban,
+          vcovPred = sd.parms.init$vcovPred
+        ) })
+      
+      
+      n.vals <- 200 #number of aban values to draw for use in simulations
+      ni<-200 #number of iterations per draw
+      #draw abandonment values
+      eta.a.vec <- runif(n.vals,-2,4)
+      eta.a.vec <- eta.a.vec[sort.list(eta.a.vec)] #sort from low to high; makes plotting later easier
+      #define stuff
+      lambda.mat.ex <- lambda.mat.un <- abans.ex <- matrix(NA, nrow=ni, ncol=n.vals)
+      
+      #run projection models
+      for(i in 1:n.vals){ 
+        growth.ex <- lambda.calc(parms=parms.scen.t(), sd.parms=sd.parms.scen.t(), eta.a=eta.a.vec[i], n.ex=1, 
+                                 n.iter=ni)
+        lambda.mat.ex[,i] <- growth.ex$lambda
+        abans.ex[,i] <- growth.ex$aban.counts.ex
+        incProgress(1/n.vals) #progress bar for simulations 
+      }
+      #summarize data  
+      ref.line <- lambda.calc(parms=parms.scen.t(), sd.parms=sd.parms.scen.t(),   
+                              n.ex=0, n.iter=ni) #unexclosed reference
+      aban.ex.means <- colMeans(abans.ex)
+      prob.decline <- prob.decline.ref <- rep(NA, n.vals)
+      prob.decline.ref <- mean(ref.line$lambda[]<1)
+      for (i in 1:n.vals){
+        prob.decline[i] <- length(which(lambda.mat.ex[,i]<1))/ni 
+      }
+      prob.curv <- smooth.spline(aban.ex.means, prob.decline)
+      diffs <- abs(prob.curv$y-prob.decline.ref)
+      aban.tolerance <- round(prob.curv$x[which(diffs[]==min(diffs))],0)
+      #package data for output  
+      list(prob.decline=prob.decline, prob.decline.ref=prob.decline.ref, aban.ex.means=aban.ex.means, prob.curv=prob.curv,
+           aban.tolerance=aban.tolerance)
+    }) #scen.thresholds withProgress
+  }) #scen.thresholds 
+  #########################################################################################################
   
+  scen.thresh.summary <- reactiveValues(prob.decline=NA, prob.decline.ref=NA, 
+                                        aban.ex.means=NA, prob.curv=NA,aban.tolerance=NA)  
+  
+  observeEvent(input$Scen.threshold.data, {
+    if(input$Scen.threshold.data) {
+      scen.thresh.summary$prob.decline <- scen.thresholds()$prob.decline; scen.thresh.summary$prob.decline.ref <- scen.thresholds()$prob.decline.ref;
+      scen.thresh.summary$aban.ex.means <- scen.thresholds()$aban.ex.means; scen.thresh.summary$prob.curv <- scen.thresholds()$prob.curv;
+      scen.thresh.summary$aban.tolerance <- scen.thresholds()$aban.tolerance
+    }
+  })  
+    
 ###############################################################################################################
   
 #PACKAGE OUTPUT#### 
@@ -632,23 +719,25 @@ observeEvent(input$threshold.data, {
     
   })
   
+
+  
 #Bayesian nest fate analysis summary output####  
-  output$hatch.ex<-renderText({paste(round(survival()$Fate.est$Hatch.Ex, digits=2)*100," +/- ",
-                                     round(survival()$Fate.SD$Hatch.Ex, 2)*100, "%")})
-  output$hatch.un<-renderText({paste(round(survival()$Fate.est$Hatch.Un,2)*100, "+/-",
-                                    round(survival()$Fate.SD$Hatch.Un,2)*100,"%")})
-  output$aban.ex<-renderText({paste(round(survival()$Fate.est$Aban.Ex,2)*100, "+/-",
-                                    round(survival()$Fate.SD$Aban.Ex, 2)*100, "%")})
-  output$aban.un<-renderText({paste(round(survival()$Fate.est$Aban.Un,2)*100,"+/-",
-                                    round(survival()$Fate.SD$Aban.Un, 2)*100, "%")})
-  output$pred.ex<-renderText({paste(round(survival()$Fate.est$Pred.Ex,2)*100,"+/-",
-                                    round(survival()$Fate.SD$Pred.Ex, 2)*100, "%")})
-  output$pred.un<-renderText({paste(round(survival()$Fate.est$Pred.Un,2)*100,"+/-",
-                                    round(survival()$Fate.SD$Pred.Un, 2)*100, "%" )})
-  output$flood.ex<-renderText({paste(round(survival()$Fate.est$Flood,2)*100,"+/-",
-                                     round(survival()$Fate.SD$Flood, 2)*100, "%")}) 
-  output$flood.un<-renderText({paste(round(survival()$Fate.est$Flood,2)*100,"+/-",
-                                     round(survival()$Fate.SD$Flood, 2)*100, "%")}) #can't show same output in two places
+  output$hatch.ex<-renderText({paste(round(survival()$Fate.est$Hatch.Ex, digits=2)*100,"(",
+                                     round(survival()$Fate.SD$Hatch.Ex, 2)*100, ") %")})
+  output$hatch.un<-renderText({paste(round(survival()$Fate.est$Hatch.Un,2)*100, "(",
+                                    round(survival()$Fate.SD$Hatch.Un,2)*100,") %")})
+  output$aban.ex<-renderText({paste(round(survival()$Fate.est$Aban.Ex,2)*100, "(",
+                                    round(survival()$Fate.SD$Aban.Ex, 2)*100, ") %")})
+  output$aban.un<-renderText({paste(round(survival()$Fate.est$Aban.Un,2)*100,"(",
+                                    round(survival()$Fate.SD$Aban.Un, 2)*100, ") %")})
+  output$pred.ex<-renderText({paste(round(survival()$Fate.est$Pred.Ex,2)*100,"(",
+                                    round(survival()$Fate.SD$Pred.Ex, 2)*100, ") %")})
+  output$pred.un<-renderText({paste(round(survival()$Fate.est$Pred.Un,2)*100,"(",
+                                    round(survival()$Fate.SD$Pred.Un, 2)*100, ") %" )})
+  output$flood.ex<-renderText({paste(round(survival()$Fate.est$Flood,2)*100,"(",
+                                     round(survival()$Fate.SD$Flood, 2)*100, ") %")}) 
+  output$flood.un<-renderText({paste(round(survival()$Fate.est$Flood,2)*100,"(",
+                                     round(survival()$Fate.SD$Flood, 2)*100, ") %")}) #can't show same output in two places
   
   Fate.summary <- reactiveValues(
     mat = matrix(rep(NA,8), nrow=4, ncol = 2, byrow=T, dimnames = list(c("Hatch", "Predation", "Abandonment", "Tide/Weather"),
@@ -658,22 +747,22 @@ observeEvent(input$threshold.data, {
 
   observeEvent(input$analyze.go, {
     if(!is.null(input$analyze.go)) {
-      Fate.summary$mat[1,1] <- paste(round(survival()$Fate.est$Hatch.Ex, digits=2)*100," +/- ",
-                                 round(survival()$Fate.SD$Hatch.Ex, 2)*100, "%")
-      Fate.summary$mat[1,2] <- paste(round(survival()$Fate.est$Hatch.Un,2)*100, "+/-",
-                                 round(survival()$Fate.SD$Hatch.Un,2)*100,"%")
-      Fate.summary$mat[2,1] <- paste(round(survival()$Fate.est$Pred.Ex,2)*100,"+/-",
-                                  round(survival()$Fate.SD$Pred.Ex, 2)*100, "%")
-      Fate.summary$mat[2,2] <- paste(round(survival()$Fate.est$Pred.Un,2)*100,"+/-",
-                                 round(survival()$Fate.SD$Pred.Un, 2)*100, "%" )
-      Fate.summary$mat[3,1] <- paste(round(survival()$Fate.est$Aban.Ex,2)*100, "+/-",
-                                 round(survival()$Fate.SD$Aban.Ex, 2)*100, "%")
-      Fate.summary$mat[3,2] <- paste(round(survival()$Fate.est$Aban.Un,2)*100,"+/-",
-                                 round(survival()$Fate.SD$Aban.Un, 2)*100, "%")
-      Fate.summary$mat[4,1] <- paste(round(survival()$Fate.est$Flood,2)*100,"+/-",
-                                                      round(survival()$Fate.SD$Flood, 2)*100, "%")
-      Fate.summary$mat[4,2] <- paste(round(survival()$Fate.est$Flood,2)*100,"+/-",
-                                     round(survival()$Fate.SD$Flood, 2)*100, "%")
+      Fate.summary$mat[1,1] <- paste(round(survival()$Fate.est$Hatch.Ex, digits=2)*100,"(",
+                                 round(survival()$Fate.SD$Hatch.Ex, 2)*100, ") %")
+      Fate.summary$mat[1,2] <- paste(round(survival()$Fate.est$Hatch.Un,2)*100, "(",
+                                 round(survival()$Fate.SD$Hatch.Un,2)*100,") %")
+      Fate.summary$mat[2,1] <- paste(round(survival()$Fate.est$Pred.Ex,2)*100,"(",
+                                  round(survival()$Fate.SD$Pred.Ex, 2)*100, ") %")
+      Fate.summary$mat[2,2] <- paste(round(survival()$Fate.est$Pred.Un,2)*100,"(",
+                                 round(survival()$Fate.SD$Pred.Un, 2)*100, ") %" )
+      Fate.summary$mat[3,1] <- paste(round(survival()$Fate.est$Aban.Ex,2)*100, "(",
+                                 round(survival()$Fate.SD$Aban.Ex, 2)*100, ") %")
+      Fate.summary$mat[3,2] <- paste(round(survival()$Fate.est$Aban.Un,2)*100,"(",
+                                 round(survival()$Fate.SD$Aban.Un, 2)*100, ") %")
+      Fate.summary$mat[4,1] <- paste(round(survival()$Fate.est$Flood,2)*100,"(",
+                                                      round(survival()$Fate.SD$Flood, 2)*100, ") %")
+      Fate.summary$mat[4,2] <- paste(round(survival()$Fate.est$Flood,2)*100,"(",
+                                     round(survival()$Fate.SD$Flood, 2)*100, ") %")
     }
   })
   
@@ -684,9 +773,9 @@ observeEvent(input$threshold.data, {
     graph <- persp(x,y,z, expand=0.9,mar=c(10,1,0,2),
                    zlab="", xlab="",ylab="", border=NA,
                    phi=20,theta=30, ticktype="detailed", col=color[facetcol])
-    x.label <- c("Abandonment")
+    x.label <- c("Abandonment Probability")
     x.label2 <- c("with Exclosures")
-    y.label <- c("Predation")
+    y.label <- c("Predation Probability")
     y.label2 <- c("without Exclosures")
     x.label.pos <- trans3d(0.1, -0.1, -1.1, pmat=graph)
     x.label2.pos <- trans3d(0.1,-0.18,-1.15,pmat=graph)
@@ -752,6 +841,8 @@ observeEvent(input$threshold.data, {
   output$growthSteepEx <- renderText({paste(round(trajectory()$growth.steep.ex*100,0), "%")})
   output$growthSteepUn <- renderText({paste(round(trajectory()$growth.steep.un*100,0), "%")})
   
+  
+  
   traj.probs <- reactiveValues(
     mat = matrix(rep(NA,8), nrow=4, ncol = 2, byrow=T, dimnames = list(c("Rapid Growth", "Growth", 
                                                                          "Decline", "Rapid Decline"),
@@ -776,7 +867,7 @@ observeEvent(input$threshold.data, {
   
   output$thresh.abans <- renderPlot({
     par(mar=c(5,5,4,2)+0.1)
-    plot(x=NULL, y=NULL, xlab="Number of Exclosure-related Abandonments",
+    plot(x=NULL, y=NULL, xlab="Number of Abandonments",
          ylab="Probability of Population Decline", ylim=c(0,1), xlim=c(0, max(thresholds()$aban.ex.means)), 
          xaxt = "n")
     axis(1, at=seq(0,max(thresholds()$aban.ex.means),by=1))
@@ -786,7 +877,6 @@ observeEvent(input$threshold.data, {
     {y.coord <- c(thresholds()$prob.curv$y[1:(n.vals-length(thresholds()$prob.curv$y))], thresholds()$prob.curv)}
     polygon(c(thresholds()$aban.ex.means[1], thresholds()$aban.ex.means, thresholds()$aban.ex.means[n.vals]), 
             c(0,y.coord,0), density=10, angle=45)
-    #abline(a = mean(trajectory()$aban.counts.ex))  #rethink; won't run unless trajectory has been run
     abline(h=thresholds()$prob.decline.ref, lty=2, lwd=2)
     par(xpd=T)
     legend("topright", c("Exclosed", "Unexclosed Reference"), xpd=T, lty=c(1,2), lwd=c(2,2), adj=c(0,NA)) 
@@ -801,8 +891,8 @@ observeEvent(input$threshold.data, {
   output$resettableScenarioValues <- renderUI({
     times <- input$reset_input
     div(id=letters[(times %% length(letters)) + 1],
-        sliderInput("predRisk", "Predation Risk without Exclosures", min = 0, max = 99, value = 60),
-        sliderInput("abanRisk", "Abandonment Risk with Exclosures", min = 0, max = 99, value = 10),
+        sliderInput("predRisk", "Predation Risk without Exclosures", min = 0, max = 99, value = 36), #average values for defaults
+        sliderInput("abanRisk", "Abandonment Risk with Exclosures", min = 0, max = 99, value = 6),
         sliderInput("mortality", "Mortality Probability Given Abandonment", min = 0, max = 100, value = 70))
   })
   
@@ -862,6 +952,31 @@ observeEvent(input$threshold.data, {
   })
   
   
+  #scenario thresholds plot####
+  
+  output$scen.thresh.abans <- renderPlot({
+    par(mar=c(5,5,4,2)+0.1)
+    plot(x=NULL, y=NULL, xlab="Number of Abandonments",
+         ylab="Probability of Population Decline", ylim=c(0,1), xlim=c(0, max(scen.thresholds()$aban.ex.means)), 
+         xaxt = "n")
+    axis(1, at=seq(0,max(scen.thresholds()$aban.ex.means),by=1))
+    prob.curv <- smooth.spline(scen.thresholds()$aban.ex.means, scen.thresholds()$prob.decline)
+    lines(scen.thresholds()$prob.curv, lwd=2)
+    if (length(scen.thresholds()$prob.curv$y)>=n.vals) {y.coord <- scen.thresholds()$prob.curv$y[1:200]} else 
+    {y.coord <- c(scen.thresholds()$prob.curv$y[1:(n.vals-length(scen.thresholds()$prob.curv$y))], scen.thresholds()$prob.curv)}
+    polygon(c(scen.thresholds()$aban.ex.means[1], scen.thresholds()$aban.ex.means, scen.thresholds()$aban.ex.means[n.vals]), 
+            c(0,y.coord,0), density=10, angle=45)
+    abline(h=scen.thresholds()$prob.decline.ref, lty=2, lwd=2)
+    par(xpd=T)
+    legend("topright", c("Exclosed", "Unexclosed Reference"), xpd=T, lty=c(1,2), lwd=c(2,2), adj=c(0,NA)) 
+    
+  })
+  
+  output$SCENreassess <- renderText({paste("Reassess or pull exclosures after ", scen.thresholds()$aban.tolerance, 
+                                       "observed nest abandonments")})
+  
+  
+  
 #REPORT####
   output$Report <- downloadHandler(
     # For PDF output, change this to "report.pdf"
@@ -873,22 +988,17 @@ observeEvent(input$threshold.data, {
       tempReport <- file.path(tempdir(), "Report.Rmd")
       file.copy("Report.Rmd", tempReport, overwrite = TRUE)
       
-      if(input$NestSum) {sum.include = 1} else {sum.include = 0}
+    #  if(input$NestSum) {sum.include = 1} else {sum.include = 0}
         summary<-as.data.frame(input.summary())
-      if(input$NestFate) {fate.include=1} else {fate.include=0}
+     # if(input$NestFate) {fate.include=1} else {fate.include=0}
         
-      if(input$Lambda & !is.na(lambda.summary$lambda.ex)) {plot.include=1} else {plot.include=0}
+      if(!is.na(lambda.summary$lambda.ex)) {plot.include=1} else {plot.include=0}
         
-      if(input$Thresholds & !is.na(thresh.summary$prob.curv)) {thresh.include=1} else {thresh.include=0}
-        
-      if(input$IncludeScenario & !is.na(scen.summary$lambda.ex)) {scen.include=1} else {scen.include=0}
-        
+      if(!is.na(thresh.summary$prob.curv)) {thresh.include=1} else {thresh.include=0}
+ 
       params <- list(summary=summary, lambda.ex=lambda.summary$lambda.ex, lambda.un=lambda.summary$lambda.un, 
                      plot.include=plot.include, thresh.include=thresh.include, thresholds=thresh.summary,
-                     sum.include=sum.include, Fate.summary=Fate.summary$mat, fate.include=fate.include,
-                     traj.probs=traj.probs$mat, N0=input$Pairs, aban.choose=input$abanRisk, 
-                     pred.choose=input$predRisk, mort.choose = input$mortality, scen.include=scen.include,
-                     scenario=scen.summary, scen.traj.probs=scen.traj.probs$mat)
+                      Fate.summary=Fate.summary$mat,  traj.probs=traj.probs$mat, N0=input$Pairs)
       # Knit the document, passing in the `params` list, and eval it in a
       # child of the global environment (this isolates the code in the document
       # from the code in this app).
@@ -898,7 +1008,88 @@ observeEvent(input$threshold.data, {
       )
     }
   ) #report
+  
+  output$ReportWord <- downloadHandler(
+    # For PDF output, change this to "report.pdf"
+    filename = "Report.docx",
+    content = function(file) {
+      # Copy the report file to a temporary directory before processing it, in
+      # case we don't have write permissions to the current working dir (which
+      # can happen when deployed).
+      tempReport <- file.path(tempdir(), "ReportWord.Rmd")
+      file.copy("ReportWord.Rmd", tempReport, overwrite = TRUE)
+      
+      #  if(input$NestSum) {sum.include = 1} else {sum.include = 0}
+      summary<-as.data.frame(input.summary())
+      # if(input$NestFate) {fate.include=1} else {fate.include=0}
+      
+      if(!is.na(lambda.summary$lambda.ex)) {plot.include=1} else {plot.include=0}
+      
+      if(!is.na(thresh.summary$prob.curv)) {thresh.include=1} else {thresh.include=0}
+      
+      params <- list(summary=summary, lambda.ex=lambda.summary$lambda.ex, lambda.un=lambda.summary$lambda.un, 
+                     plot.include=plot.include, thresh.include=thresh.include, thresholds=thresh.summary,
+                     Fate.summary=Fate.summary$mat,  traj.probs=traj.probs$mat, N0=input$Pairs)
+      # Knit the document, passing in the `params` list, and eval it in a
+      # child of the global environment (this isolates the code in the document
+      # from the code in this app).
+      rmarkdown::render(tempReport, output_file = file,
+                        params = params,
+                        envir = new.env(parent = globalenv())
+      )
+    }
+  ) #report word
+  
+  output$ScenReport <- downloadHandler(
+    # For PDF output, change this to "report.pdf"
+    filename = "ScenReport.html",
+    content = function(file) {
+      tempReport <- file.path(tempdir(), "ScenReport.Rmd")
+      file.copy("ScenReport.Rmd", tempReport, overwrite = TRUE)
 
+      if(!is.na(scen.thresh.summary$prob.curv)) {scen.thresh.include=1} else {scen.thresh.include=0}
+      
+      if(!is.na(scen.summary$lambda.ex)) {scen.include=1} else {scen.include=0}
+      
+      params <- list(aban.choose=input$abanRisk, 
+                     pred.choose=input$predRisk, mort.choose = input$mortality, scen.include=scen.include,
+                     scenario=scen.summary, scen.traj.probs=scen.traj.probs$mat, N0=input$ScenPairs,
+                     thresh.include=scen.thresh.include, thresholds=scen.thresh.summary)
+      # Knit the document, passing in the `params` list, and eval it in a
+      # child of the global environment (this isolates the code in the document
+      # from the code in this app).
+      rmarkdown::render(tempReport, output_file = file,
+                        params = params,
+                        envir = new.env(parent = globalenv())
+      )
+    }
+  ) #scenreport
+  
+  output$ScenReportWord <- downloadHandler(
+    # For PDF output, change this to "report.pdf"
+    filename = "ScenReport.docx",
+    content = function(file) {
+      tempReport <- file.path(tempdir(), "ScenReportWord.Rmd")
+      file.copy("ScenReportWord.Rmd", tempReport, overwrite = TRUE)
+      
+      if(!is.na(scen.thresh.summary$prob.curv)) {scen.thresh.include=1} else {scen.thresh.include=0}
+      
+      if(!is.na(scen.summary$lambda.ex)) {scen.include=1} else {scen.include=0}
+      
+      params <- list(aban.choose=input$abanRisk, 
+                     pred.choose=input$predRisk, mort.choose = input$mortality, scen.include=scen.include,
+                     scenario=scen.summary, scen.traj.probs=scen.traj.probs$mat, N0=input$ScenPairs,
+                     thresh.include=scen.thresh.include, thresholds=scen.thresh.summary)
+      # Knit the document, passing in the `params` list, and eval it in a
+      # child of the global environment (this isolates the code in the document
+      # from the code in this app).
+      rmarkdown::render(tempReport, output_file = file,
+                        params = params,
+                        envir = new.env(parent = globalenv())
+      )
+    }
+  ) #scenario report word
+  
   
  }
 )#shinyServer
