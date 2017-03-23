@@ -241,7 +241,8 @@ shinyServer(
  
   survival <- eventReactive(input$analyze.go,{
     validate(
-      need(!is.null(nestdata$nestdata), "Please upload data")
+      need(!is.null(nestdata$nestdata), "Please upload data"),
+      need(length(which(is.na(nestdata$Date)))<1, "Warning: missing dates detected. Double-check date formatting.")
     )
     withProgress(message = "Calculating, this may take a few minutes...",{
      nestdata <- nestdata$nestdata
@@ -290,7 +291,9 @@ shinyServer(
      #data validation
      validate(
        need(!is.na(max(nestdata$Exclosed)), "Cannot Proceed: Missing data in exclosure column. Please fill in missing data.")
+
      )
+     
      
      #bundle data and prep for jags
      win.data<-list(ex = nestdata[,"Exclosed"],n=n,interval=nestdata[,"Interval"],Fate=Fate,
@@ -335,12 +338,19 @@ shinyServer(
      vcovAban <- cov(cbind(out$sims.list$alpha.a, out$sims.list$beta.a.ex))
      vcovPred <- cov(cbind(out$sims.list$alpha.p, out$sims.list$beta.p.ex))
      
+     alpha.f.sd <- out$sd$alpha.f
+     
      #prepare output
      list(alpha.p=alpha.p, alpha.a=alpha.a, alpha.f=alpha.f, beta.a.ex=beta.a.ex,  beta.p.ex=beta.p.ex, vcovAban=vcovAban,
-          vcovPred=vcovPred, Fate.est=Fate.est,Fate.SD=Fate.SD, out=out) #missing alpha.f sd: put back in
+          vcovPred=vcovPred, Fate.est=Fate.est,Fate.SD=Fate.SD, out=out, alpha.f.sd=alpha.f.sd) 
     })
   }) #survival()
   
+output$SmallSampleWarn <- renderText({ 
+  if (input.summary()$nest.count<=10){
+    paste("Warning: Data Entered Do Not Meet Minimum Recommended Sample Size of 10 Nests")
+  }
+  })  
   
 #update params to use in lambda calculations	####
   parms <- reactive({
@@ -452,7 +462,7 @@ shinyServer(
       }
       prob.curv <- smooth.spline(aban.ex.means, prob.decline)
       diffs <- abs(prob.curv$y-prob.decline.ref)
-      aban.tolerance <- round(prob.curv$x[which(diffs[]==min(diffs))],0)
+      aban.tolerance <- round(prob.curv$x[min(which(diffs[]==min(diffs)))],0)
       #package data for output  
       list(prob.decline=prob.decline, prob.decline.ref=prob.decline.ref, aban.ex.means=aban.ex.means, prob.curv=prob.curv,
            aban.tolerance=aban.tolerance)
@@ -483,28 +493,38 @@ observeEvent(input$threshold.data, {
   scenario <- eventReactive(input$scenario,
                             {withProgress(message = "Calculating ..",{
                               
-                              #back-transform inputs to get intercept values
+                              #back-transform inputs to get alpha.p and beta.a.ex values
                               back.calc <- function(x){
-                                alpha.a <- x[1] 
+                                alpha.a <- mean.parms$alpha.a
                                 alpha.p <- x[2]
                                 alpha.f <- mean.parms$alpha.f
-                                beta.a.ex <- mean.parms$beta.a.ex
+                                beta.a.ex <- x[1]
                                 beta.p.ex <- mean.parms$beta.p.ex
                                 a <- x[3]
                                 p <- x[4]
                                 y <- rep(NA,2)
-                                y[1] <- (exp(alpha.a+beta.a.ex)/(exp(alpha.a+beta.a.ex)+exp(alpha.p+beta.p.ex)+exp(alpha.f)+1))/(1-1/(exp(alpha.a+beta.a.ex)+
-                                                                                                                                        exp(alpha.p+beta.p.ex)+exp(alpha.f)+1))* (1-(1/(exp(alpha.a+beta.a.ex)+exp(alpha.p+beta.p.ex)+exp(alpha.f)+1))^34)-a
-                                y[2] <- (exp(alpha.p)/(exp(alpha.a)+exp(alpha.p)+exp(alpha.f)+1))/(1-1/(exp(alpha.a)+exp(alpha.p)+exp(alpha.f)+1))*
-                                  (1-(1/(exp(alpha.a)+exp(alpha.p)+exp(alpha.f)+1))^34)-p
+                                #linear predictors:
+                                linp.ex <- exp(alpha.p + beta.p.ex)
+                                linp <- exp(alpha.p)
+                                linf <- exp(alpha.f)
+                                lina.ex <- exp(alpha.a + beta.a.ex)
+                                lina <- exp(alpha.a)
+                                #denominator
+                                den.ex <- 1 + linp.ex + linf + lina.ex
+                                den <- 1 + linp + linf + lina
+                                surv.ex <- 1/(den.ex) #daily survival probability for exclosed nests
+                                surv <- 1/den #daily survival probability for unexclosed nests
+                                #solve for beta.a.ex given a, with y[1] set to 0:
+                                y[1] <- ((lina.ex/den.ex)/(1-surv.ex))*(1-surv.ex^34)-a 
+                                #take equation p = (stuff) and substract p (make y[2] 0)
+                                y[2] <- ((linp/den)/(1-surv))*(1-surv^34)-p
                                 y[3] <- a-a
                                 y[4] <- p-p
-                                
                                 y
-                                
                               }
                               
-                              parm.est <- dfsane(c(-3,-4,input$abanRisk/100,input$predRisk/100),back.calc)$par
+                              #supply 1 and -4 as initial parameter value guesses
+                              parm.est <- dfsane(c(1,-4,input$abanRisk/100,input$predRisk/100),back.calc)$par
                               
                               parms.scen <- reactive({
                                 list(
@@ -514,14 +534,14 @@ observeEvent(input$threshold.data, {
                                   ys=0.68,  #probability of second-year bird nesting
                                   Phij=0.52,  
                                   Phia=0.74,
-                                  f=0.4,
+                                  f=input$fledge/100,
                                   m=input$mortality/200,
                                   E = 0.94,
                                   r2 = 0.7,
                                   r3 = 0.7,
-                                  beta.a.ex = mean.parms$beta.a.ex,
+                                  beta.a.ex = parm.est[1],
                                   beta.p.ex = mean.parms$beta.p.ex,
-                                  alpha.a = parm.est[1],
+                                  alpha.a = mean.parms$alpha.a,
                                   alpha.p = parm.est[2],
                                   alpha.f = mean.parms$alpha.f
                                 ) })
@@ -565,12 +585,6 @@ observeEvent(input$threshold.data, {
                         }#with progress
   )#event reactive
   
-  warning <- reactive({
-    list(total.risk = input$abanRisk + input$predRisk)
-  })
-  
-  output$warning <- renderText(if(warning()$total.risk >= 100)
-    paste("Warning: Predation Risk + Abandonment Risk must = less than 100%"))
 
   #THRESHOLDS FOR SCENARIO####
 
@@ -585,14 +599,14 @@ observeEvent(input$threshold.data, {
           ys=0.68,  #probability of second-year bird nesting
           Phij=0.52,  
           Phia=0.74,
-          f=0.4,
+          f=input$fledge/100,
           m=input$mortality/200,
           E = 0.94,
           r2 = 0.7,
           r3 = 0.7,
-          beta.a.ex = mean.parms$beta.a.ex,
+          beta.a.ex = scenario()$parm.est[1],
           beta.p.ex = mean.parms$beta.p.ex,
-          alpha.a = scenario()$parm.est[1],
+          alpha.a = mean.parms$alpha.a,
           alpha.p = scenario()$parm.est[2],
           alpha.f = mean.parms$alpha.f
         ) })
@@ -640,7 +654,7 @@ observeEvent(input$threshold.data, {
       }
       prob.curv <- smooth.spline(aban.ex.means, prob.decline)
       diffs <- abs(prob.curv$y-prob.decline.ref)
-      aban.tolerance <- round(prob.curv$x[which(diffs[]==min(diffs))],0)
+      aban.tolerance <- round(prob.curv$x[min(which(diffs[]==min(diffs)))],0)
       #package data for output  
       list(prob.decline=prob.decline, prob.decline.ref=prob.decline.ref, aban.ex.means=aban.ex.means, prob.curv=prob.curv,
            aban.tolerance=aban.tolerance)
@@ -701,8 +715,8 @@ observeEvent(input$threshold.data, {
   output$preds<-renderText({paste("Number of depredations = ", input.summary()$preds)})
   output$abans<-renderText({paste("Number of abandonments = ", input.summary()$abans)})
   output$floods<-renderText({paste("Number of tidal/weather-caused failures = ", input.summary()$floods)})
-  output$uknfail<-renderText({paste("Number of failures due to uknown cause = ", input.summary()$uknfail)})
-  output$uknfate<-renderText({paste("Number of uknown fates = ", input.summary()$uknfate)})
+  output$uknfail<-renderText({paste("Number of failures due to unknown cause = ", input.summary()$uknfail)})
+  output$uknfate<-renderText({paste("Number of unknown fates = ", input.summary()$uknfate)})
   output$otherfail<-renderText({paste("Number of failures from other causes =", input.summary()$otherfail)})
   
 #editable data table####
@@ -887,13 +901,14 @@ observeEvent(input$threshold.data, {
                                        "observed nest abandonments")})
   
   #scenario modeling output####
-  #resettable values
+  #resettable slider values####
   output$resettableScenarioValues <- renderUI({
     times <- input$reset_input
     div(id=letters[(times %% length(letters)) + 1],
-        sliderInput("predRisk", "Predation Risk without Exclosures", min = 0, max = 99, value = 36), #average values for defaults
-        sliderInput("abanRisk", "Abandonment Risk with Exclosures", min = 0, max = 99, value = 6),
-        sliderInput("mortality", "Mortality Probability Given Abandonment", min = 0, max = 100, value = 70))
+        sliderInput("predRisk", "Predation Probability without Exclosures", min = 0, max = 99, value = 36), #average values for defaults
+        sliderInput("abanRisk", "Abandonment Probability with Exclosures", min = 0, max = 99, value = 6),
+        sliderInput("mortality", "Mortality Probability Given Abandonment", min = 0, max = 100, value = 70),
+        sliderInput("fledge","Chick Survival Probability (Hatch to Fledge)", min=1, max=99, value=40))
   })
   
    
@@ -1051,7 +1066,7 @@ observeEvent(input$threshold.data, {
       
       if(!is.na(scen.summary$lambda.ex)) {scen.include=1} else {scen.include=0}
       
-      params <- list(aban.choose=input$abanRisk, 
+      params <- list(aban.choose=input$abanRisk, fledge.choose=input$fledge,
                      pred.choose=input$predRisk, mort.choose = input$mortality, scen.include=scen.include,
                      scenario=scen.summary, scen.traj.probs=scen.traj.probs$mat, N0=input$ScenPairs,
                      thresh.include=scen.thresh.include, thresholds=scen.thresh.summary)
@@ -1076,7 +1091,7 @@ observeEvent(input$threshold.data, {
       
       if(!is.na(scen.summary$lambda.ex)) {scen.include=1} else {scen.include=0}
       
-      params <- list(aban.choose=input$abanRisk, 
+      params <- list(aban.choose=input$abanRisk, fledge.choose=input$fledge,
                      pred.choose=input$predRisk, mort.choose = input$mortality, scen.include=scen.include,
                      scenario=scen.summary, scen.traj.probs=scen.traj.probs$mat, N0=input$ScenPairs,
                      thresh.include=scen.thresh.include, thresholds=scen.thresh.summary)
