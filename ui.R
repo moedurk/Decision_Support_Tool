@@ -3,7 +3,7 @@ library(rhandsontable) #needs to be loaded from ui file, unlike other packages
 #ui####
 
 shinyUI(fluidPage(
-  titlePanel("Piping Plover Decision Support Tool"),
+  titlePanel("PiperEx: Piping Plover Decision Support Tool for Exclosure Use"),
   tabsetPanel(
     #Introduction####
     tabPanel("Introduction",
@@ -90,7 +90,8 @@ shinyUI(fluidPage(
                br(),
                helpText("Analysis may take a few minutes. Results will be displayed below once the model has finished running.
                         Probabilities will be displayed as percentages, rounded to the nearest 1 percent,
-                       with standard error in parentheses", style="font-size:12pt")
+                       with standard error in parentheses", style="font-size:12pt"),
+               h3(textOutput("SmallSampleWarn"), style="color:red") 
                ) #wellPanel
               ) #column
              ), #fluidRow
@@ -249,7 +250,6 @@ shinyUI(fluidPage(
           wellPanel(
           h2("Choose Values", style = "color:#000066"),
           uiOutput("resettableScenarioValues"),
-             h3(textOutput("warning"), style="color:red"),
              actionButton("scenario","Press to Calculate"),
             actionButton("reset_input", "Press to Reset Values")
           ) #wellPanel
@@ -343,7 +343,7 @@ shinyUI(fluidPage(
                estimates of exclosure effects and nest abandonment and predation probabilities. These values are then 
                used to predict season-long productivity and breeding adult survival rates, which are combined with 
                published or expert opinion values of other demographic rates to estimate population growth rate at the 
-               user’s site with and without exclosures. The results can support a decision to use exclosures or not, 
+               user's site with and without exclosures. The results can support a decision to use exclosures or not, 
                based on whether exclosures increase or decrease population growth rate compared to not using exclosures."),
              h3("Model Assumptions and Limitations"),
              p("The models underlying this tool were parameterized using data from the Atlantic Coast population 
@@ -359,7 +359,7 @@ shinyUI(fluidPage(
                each step are provided in the remainder of this document."),
              h3("1. Decide when and where to start"),
              p("We recommend using this tool twice during the breeding season: once at the beginning to make an 
-               initial management decision based on the previous year’s data, and again after June 1 or after you 
+               initial management decision based on the previous year's data, and again after June 1 or after you 
                have accumulated new data for at least 10 complete nests (complete meaning the nests have hatched or 
                failed). If you have data, start in the", span("Upload Data", style="color:blue"), "tab to load your data into the tool and move on to 
                the next Step. If you do not have data, and/or you wish to explore hypothetical situations, you start 
@@ -387,20 +387,45 @@ shinyUI(fluidPage(
              h3("7. Generate Report"),
              p("In both the", span("Decision Support", style="color:blue"),"and", 
                span("Scenario Modeling", style="color:blue"),"sections include buttons that will generate either 
-               HTML or Word document reports summarizing the user’s analyses. "),
+               HTML or Word document reports summarizing the user's analyses. "),
              h2("Getting your data into the tool"),
              p("To begin your analysis, navigate to the", span("Upload Data", style="color:blue"),"tab of the tool"),
              img(src = "uploadOverview.png"),
+             
+             
              h3("Sample Size Requirements"),
+             p("Before gathering your data for analysis, given that the tool treats all data supplied as a single site,
+               you will need to decide what constitutes a site. This question is particularly relevant for managers
+               of either large areas that could be divided into smaller sites, or managers of multiple small sites 
+               within a region. In general, a site is an area subject to a single management plan and experiencing 
+               largely similar environmental conditions. If you wish to treat management units within a larger area as
+               separate sites, then data for each unit needs to be run separately and will need to meet the minimum 
+               sample size criteria (discussed below). It will thus be preferable in most cases to combine adjacent 
+               management units to provide better estimates to inform the model, but if there are enough nests in each 
+               unit to be run separately, it may be worthwhile to compare the resulting decision for one large site 
+               versus treating it as several smaller sites."),
+             
              p("The tool will run regardless of sample size, but we recommend a minimum of 10 nests be uploaded for 
                getting reliable site- and year-specific recommendations. This sample size cutoff is based on 
                preliminary simulations to calculate the probability of making the correct decision as a function of 
                sample size. With 5 nests, the probability of making the correct decision is 55% (i.e. you might as 
                well flip a coin). With 10 nests the probability is 80%, and the probability continues to increase as 
-               sample size gets larger. If you do not have at least 10 COMPLETE nests (i.e. nests that have hatched or
-               failed), we recommend skipping the data upload and analysis and moving straight
-               to", span("Scenario Modeling", style="color:blue"),"."),
-             h3("Data Format Requirements"),
+               sample size gets larger."),
+             
+             p("If you do not have at least 10 COMPLETE nests (i.e. nests that have hatched or
+               failed) from either the previous year or for the current year, we recommend 
+                choosing one of the following options: 1) combine data from multiple years for your site; 2)
+                combine your data with nearby similar sites; or 3)skipping the data 
+               upload and analysis and moving straightto", span("Scenario Modeling", style="color:blue"),".
+               If you choose option 1 (combine multiple years of data), you will get an average site-specific 
+               prediction of the risks/benefits of exclosures, and the resulting decision will thus represent the 
+               preferred management action in an average year - additional scenario modeling will be necessary if 
+               you believe the current year is unusual in terms of either nest predation or abandonment rates. For 
+               choosing option 2 (combine sites), consider whether the sites are likely to experience similar factors 
+               that influence nest predation and adult mortality risk."),
+             
+             
+          h3("Data Format Requirements"),
              p("The data file MUST be in a .csv format. If you are unfamiliar with this file type or how to convert
                your data to a .csv format, please refer to Appendix 1 in the circulated pdf instructions, or 
                download the example file and enter or paste your data into it."),
@@ -421,11 +446,12 @@ shinyUI(fluidPage(
                analysis. Entries in the Date column must be in the format mm/dd/yyyy; other formats will produce 
                errors or incorrect date assignment. Exclosed must be Y or N (not case sensitive).  Nest.ID can 
                be any character string, but care must be taken to ensure that each nest name is recorded EXACTLY the 
-               same way each time – any variation in capitalization or spacing in the name will cause the program to 
+               same way each time - any variation in capitalization or spacing in the name will cause the program to 
                recognize this as a different nest, e.g. nest1, nest 1, and Nest1 would be considered three separate 
                nests. Status should be an integer from 1-8. Missing values are not allowed in any of these fields and 
                must be filled in before analysis."),
-             h3("Nest Status Definitions and Guidelines"),
+          
+           h3("Nest Status Definitions and Guidelines"),
              h4("1 = Active"),
              p("Active indicates that eggs are present and the nest is being attended by an adult, or if no adult is 
                present that there is additional evidence that the nest has not been abandoned (e.g., fresh plover 
@@ -436,7 +462,7 @@ shinyUI(fluidPage(
                other than eggs missing but other factors such as flooding or abandonment were ruled out."),
              h4("3 = Weather-related or Tidal Flooding"),
              p("Nest is completely or partially washed out following heavy rain or high tides, and must be determined 
-               by a person already familiar with the nest’s location; or nest completely or partially sanded in 
+               by a person already familiar with the nest's location; or nest completely or partially sanded in 
                following a storm or unusually strong winds. Note that nests plovers may excavate and continue to 
                incubate eggs that have been sanded in, so we recommend continued monitoring before making this 
                determination."),
@@ -456,7 +482,9 @@ shinyUI(fluidPage(
              h4("8 = Other Cause of Failure"),
              p("Use this code to indicate known sources of nest failure that do not fit in the remaining categories, e.g.
                eggs trampled by pedestrians."),
-             h3("C. Uploading the Data"),
+          
+          
+            h3("Uploading Your Data"),
              p("Click on the", span("Upload Data", style="color:blue"),"tab at the top of the screen to navigate to the Upload section. 
                At the top of the sidebar is a section titled", span(strong("Upload Nest Data File")) ,"; press the button 
                labeled", span(code("Browse...", style="color:black")),"to select and upload a file from your computer. Once the file has been selected, the tool 
@@ -465,7 +493,9 @@ shinyUI(fluidPage(
                the page), and under", span(strong("Summary of Data Entered")) ,"you will see a count of how many unique nests are 
                included in the dataset and how many of each nest fate has been entered."),
              img(src="enteredData.png"),
-             h3("D. Proofing and Editing Your Data"),
+          
+          
+          h3("Proofing and Editing Your Data"),
              p("After you have uploaded data, you can edit existing entries or add new entries if needed. 
                To insert a new row of data, right-click anywhere in the table and select 
                either", span(code("Insert row above", style="color:black")),"or", span(code("Insert row below", style="color:black")),"; 
@@ -480,23 +510,24 @@ shinyUI(fluidPage(
              p("You can sort the data by any column by first right-clicking once on the column name, which will 
                simultaneously highlight the column in blue and sort the table by the column in ascending order. 
                Click a second time to sort in descending order."),
-             h3("E. Display Cleaned Data"),
-             p("The tool will initially display your dataset exactly as it is arranged in the file you uploaded. 
+          
+            h3("Display Cleaned Data"),
+             p("This step is optional but recommended as a final error-proofing opportunity.
+               The tool will initially display your dataset exactly as it is arranged in the file you uploaded. 
                However, before the tool enters the nest fate analysis phase, it prepares the data for analysis by 
                sorting the dataset by nest ID and date, calculating nest check interval lengths, removing any extra 
                columns, and removing any post-hatch data that might be included. If you wish to see how your data look
                after the cleaning process, press the button labeled", span(code("Display Cleaned Data", style="color:black")),". This will arrange the table
-               by nest and date, fill in the interval column, and remove post-hatch rows. This step is not required
-               before moving on, but it is recommended as an additional error-proofing opportunity. The first entry 
+               by nest and date, fill in the interval column, and remove post-hatch rows.The first entry 
                for each nest should have a blank Interval entry (because the nest had not been previously checked), 
-               and all other intervals should be strictly positive."),
+               and all other intervals should be positive integers."),
              p("If you wish to save a copy of your cleaned data, press the button 
                labeled ", span(code("Download Cleaned Data", style="color:black")),", which will open your cleaned data as a .csv file."),
              h3("Troubleshooting and Tips"),
              p("Ensure that the number of nests entered under", span(strong("Summary of Data Entered")),"matches 
-              your expectations – a nest count greater than you believe you have entered is indicative of misspelled 
+              your expectations - a nest count greater than you believe you have entered is indicative of misspelled 
                nest names in your data."),
-             p("•	Arrange the data and check the Interval column – if you see an unusually long interval 
+             p("Arrange the data and check the Interval column - if you see an unusually long interval 
                (e.g., > 30 days), double-check the dates of that and the preceding row."),
         #######################
         #nest fate analysis section of instructions
@@ -539,15 +570,15 @@ shinyUI(fluidPage(
       h3("3D Guideline Plot"),
       p("The first thing you see on this page is a 3-dimensional surface plot. The data displayed here are the result 
         of simulations used to calculate the expected gain (which can be positive or negative) in population growth 
-        rate at a hypothetical site as a function of that site’s exclosure-related abandonment risk and predation
+        rate at a hypothetical site as a function of that site's exclosure-related abandonment risk and predation
         risk for unexclosed nests. Positive values are shown in green and represent an increase in population growth 
         with exclosures compared to not using exclosures (note: population growth rate might be negative both with
         and without exclosures at a particular site, and yet the", span(em("difference")), "in growth rate between using exclosures
         and not using them, shown in the 3-D plot, could still be positive). Yellow, orange, and red values depict 
         increasingly negative effects of exclosure use on population growth rate. The solid black line shows where 
         the difference is exactly zero, i.e. population growth rate does not depend on whether or not exclosures 
-        are used. If you have already run the nest fate analysis, a point representing your site’s location on 
-        this surface will show up, surrounded by a circle that represents the degree of uncertainty in your site’s
+        are used. If you have already run the nest fate analysis, a point representing your site's location on 
+        this surface will show up, surrounded by a circle that represents the degree of uncertainty in your site's
         location. This plot is not intended to be used alone to make the decision; rather it is intended as a 
         supporting visual aid."),
       img(src="threeDplot.png"),
@@ -563,18 +594,17 @@ shinyUI(fluidPage(
       h3("Making a Decision"),
       p("Below the plot is a table that summarizes the outcomes of the population growth predictions; 
         it displays the probabilities of rapid growth (growth > 5% per year), any growth, any decline, and rapid 
-        decline (decline > 5% per year) as a function of exclosure use. The third column summarizes how exclosure
-        use affects the probabilities of each outcome. THESE ARE THE MAIN DECISION CRITERIA. In general, if 
+        decline (decline > 5% per year) as a function of exclosure use. THESE ARE THE MAIN DECISION CRITERIA. In general, if 
         exclosure use results in increased growth probability and decreased decline probability, the decision 
         should be to use exclosures. However, the user will need to consider their own logistics and values when 
-        using these probabilities for decision-making – for instance, if probability of growth with exclosures 
+        using these probabilities for decision-making - for instance, if probability of growth with exclosures 
         is only 10% greater than not using exclosures, it might not be worth the effort for some sites with 
         difficult access issues."),
       p("It  is also important to recognize that the population projection model underlying these 
         outcomes does not account for site carrying capacity or dispersal rates, in large part because 
         these factors are unknown. If the site population is predicted to grow as a result of management,
         extra birds might disperse to other parts of the region if the modeled site is already at carrying 
-        capacity – thus site-level abundance may stay the same even if the site’s population is growing.
+        capacity - thus site-level abundance may stay the same even if the site's population is growing.
         This model therefore predicts the capacity for growth in the absence of density dependence.  Future 
         versions of this model might incorporate site-specific carrying capacity, or region-level effects of 
         a site-specific management decision."),
@@ -586,11 +616,17 @@ shinyUI(fluidPage(
         you have to have completed those sections first before using this one."),
       p("If you have chosen to use exclosures, the", span(strong("Abandonment Tolerance")), "section provides 
         guidance on how many total abandonments your site can handle before you need to reassess or reverse your 
-        decision, given that conditions might change unexpectedly if, say, a predator that targets exclosures
-        shows up mid-season. Abandonment tolerance is estimated by simulating an increasing baseline level of 
-        abandonment risk  while keeping predation risk constant (with mortality risk set at the expert opinion
+        decision, given that conditions might change unexpectedly or might not match the previous year's conditions. 
+        Abandonment tolerance is estimated by simulating an increasing baseline level of 
+        abandonment risk while keeping predation risk constant (with mortality risk set at the expert opinion
         level of 70% per observed abandonment, with or without exclosures), and compares the resulting probability 
         of population decline to the probability of decline if exclosures were not used. "),
+      br(),
+      p(strong("NOTE: The number of observed abandonments is for the WHOLE season; if your pre-season assessment
+               indicted you could tolerate 2 abandonments, and then your mid-season assessment indicates you can 
+               tolerate 3 abandonments, this does NOT mean you can tolerate a total of 5 abandonments for the whole 
+               season"), style="color:red"),
+      br(),
       p("An important assumption of this model is that whatever is causing exclosure-related abandonments 
         is not also targeting unexclosed nests. Such a scenario is not currently accommodated in this model 
         but may be developed in future versions. "),
@@ -607,28 +643,28 @@ shinyUI(fluidPage(
         line represents the reference condition of no exclosures. Where the two lines intersect is the point at
         which probability of decline with and without exclosures is identical; this number will also appear in the
         text below the plot as", span(strong("Reassess or pull exclosures after X observed nest abandonments")), "."),
-      p("If you make this assessment at the start of the breeding season, we recommend that you analyze new data 
-        either 1) after June 1, or 2) after observing X nest abandonments according to this analysis, whichever
-        comes first. If you have made this assessment after June 1, then analyze new data (if possible) or consider
-        pulling exclosures after observing X  nest  abandonments."),
+      p("If you observe the threshold number of abandonments at your site, work through the following flow chart to 
+        decide whether you should pull exclosures or reassess your site condition by analyzing new data."),
+      img(src="thresholdFlowchart.png"),
       
       #Scenario Modeling
       h2("Scenario Modeling"),
       p("The", span("Scenario Modeling", style="color:blue"), "tab provides users a way to explore hypothetical scenarios. 
         This is useful for users in charge of small sites who thus lack sufficient data to run the previous analyses,
         or for anybody to explore effects of hypothetical scenarios, for example:"),
-      p("1. Effects of alternative management actions – if you believe a change in predator control practices might 
+      p("1. Effects of alternative management actions - if you believe a change in predator control practices might 
         reduce the predation risk of unexclosed nests, how will that affect your decision?"),
-      p("2. Effects of increased adult mortality risk – if you have a raptor known to target adult plovers at 
+      p("2. Effects of increased adult mortality risk - if you have a raptor known to target adult plovers at 
         exclosures, you can explore a worst case scenario in which abandonment is 100% indicative of adult mortality."),
-      p("There are three sliders that allow users to toggle values for predation risk without exclosures, 
-        abandonment risk with exclosures, and probability of an adult mortality given nest abandonment. 
+      p("3. Effects of reduced chick survival - chick survival in the population projection model is set to an 
+        average value of 0.4 (e.g., 40% of chicks survive from hatch to fledge). If your site likely experiences 
+        decreased chick survival, you can change this value to see how it might affect your results."),
+      p("There are four sliders that allow users to toggle values for predation risk without exclosures, 
+        abandonment risk with exclosures, probability of an adult mortality given nest abandonment, and chick survival. 
         The default values are set to range-wide average values for predation and abandonment based on our 2015
-        and 2016 analyses, and the default mortality risk is based on the average of four expert opinion estimates. 
-        To change the default values, click on the gray circle on the slider and move it to your desired value. 
-        Because they are probabilities, the sum of predation and abandonment probabilities must be less than 
-        100 – if you choose values that equal or exceed 100, a warning in red will appear underneath the sliders 
-        stating", span("Warning: Predation Risk + Abandonment Risk must = less than 100%", style="color:red"), ". 
+        and 2016 analyses, the default mortality risk is based on the average of four expert opinion estimates,
+        and the default chick survival is based on range-wide estimates from the literature. 
+        To change the default values, click on the gray circle on the slider and move it to your desired value.  
         Once you have selected your values, click the
         button labelled", span(code("Press to Calculate", style="color:black")),". If 
         at any time you want to reset the values to their default settings, 
@@ -645,7 +681,9 @@ shinyUI(fluidPage(
         nest abandonments a site can sustain before the benefits of exclosures do not exceed the risks,
         based on the values for predation, abandonment, and mortality rated that the user has chosen; 
         for details on use and interpretation of this section, please refer to the section above
-        called ", span(strong("Abandonment Tolerance")),"."),
+        called ", span(strong("Abandonment Tolerance")),". 16. For modeling a scenario in which e.g., 
+        a Peregrine Falcon is known to be targeting nests,", span(strong("we recommend 
+        that Mortality Probability Given Abandonment be set at 100%.", style="color:red"))),
       ##############
       
       #Generate report
