@@ -13,13 +13,14 @@ shinyUI(fluidPage(
                p("To provide site biologists with guidance for deciding whether or not to use
                  nest exclosures for Piping Plover management", style="font-size:14pt"),
                br(),
-               h3(strong("Version 1.0, March 2017")),
+               h3(strong("Version 2.0, March 2018")),
                p("Developed by Abigail Darrah and Jonathan Cohen, State University of New York College of 
                  Environmental Science and Forestry"),
                br(),
                h3(strong("Getting Started")),
-               helpText("Detailed instructions are available to read or download in the", strong("Instructions"),
-                        "tab", style="font-size:12pt"),
+               helpText("Detailed instructions are available to read in the", strong("Instructions"),
+                        "tab or to download below:", style="font-size:12pt"),
+               downloadButton("instructions","Download Instructions"),
                br(),
                h4(strong("If you have data:")),
                p("Proceed through the following tabs:"),
@@ -80,10 +81,15 @@ shinyUI(fluidPage(
              ),#tabPanel upload
     #Decision Support Tab####
     tabPanel("Decision Support", 
-             h1(strong("Nest Fate Analysis"), style="color:#000066"),
+             h1(strong("Decision Support Analysis"), style="color:#000066"),
              fluidRow(
                column(6,
              wellPanel(
+               fluidRow(
+                 h3(strong("Enter # Pairs at Site"), style = "color:#000066; padding: 0px 0px 0px 10px"),
+                 column(3,
+                        numericInput("Pairs", label="", value=20, min=1, step=1))
+               ),
                h3("Press button below after uploading nest data file", style="color:#000066"),
                actionButton("analyze.go", "Analyze Nest Fate Data"),
                br(),
@@ -96,7 +102,7 @@ shinyUI(fluidPage(
               ) #column
              ), #fluidRow
              fluidRow(
-               h2(strong("Fate Probabilities",style="color:#000066; padding:0px 0px 0px 10px")),
+               h2(strong("Nest Fate Probabilities",style="color:#000066; padding:0px 0px 0px 10px")),
                column(2),
                column(2,
                       h3("With Exclosures",style="color:#000066")
@@ -133,25 +139,12 @@ shinyUI(fluidPage(
              fluidRow(
                column(8,
                       wellPanel(
-                        h2(strong("Decision Guideline Plots", style="color:#000066")),
-                        helpText("The 3D plot below shows the difference in population growth rate with exclosure use as a 
-                                 function of site-level nest predation and nest abandonment probabilities, along with an estimate of
-                                 where your site falls.  Green values indicate an increase in population growth rate with exclosure
-                                 use, while red indicates a decrease in population growth rate with exclosure use compared to no exclosures.
-                                 "),
-                        plotOutput("ThreeDplot"),
-                        br()
-                        )
-                      )#column
-               ), #fluidRow
-             fluidRow(
-               column(8,
-                      wellPanel(
                         h2(strong("Population Growth Rate", style="color:#000066")),
-                        helpText("To see your predicted population growth rates with and without
-                                 exclosure use, first upload and analyze nest check data, then press the 
-                                 button below."),
-                        actionButton("button", "Press to Calculate"),
+                        helpText("The plot below shows the predicted population growth rates with and without
+                                 exclosure use based on the nest data that you have provided. The black
+                                 diamonds represent the mean growth rate for each scenario, while the width of the 
+                                 gray shaded area represents the relative likelihood of a given growth rate
+                                 in each scenario."),
                         br(),
                         plotOutput("lambdaplot")
                         )
@@ -193,23 +186,25 @@ shinyUI(fluidPage(
              br(),
              br(),
          #Abandonment Tolerance####
-         h1(strong("Abandonment Tolerance"), style="color:#000066"),
+         h1(strong("Abandonment and Predation Tolerance"), style="color:#000066"),
          fluidRow(
            column(8,
                   wellPanel(
                     helpText("This module provides guidelines for when to reassess your decision to use exclosures.
-                             This model simulates increasing numbers of abandonments while keeping nest predation risk
-                             constant.The plot below compares the probability of population decline without exclosures
+                             The first plot indicates how many abandonments you can tolerate if you decide to use exclosures
+                             at the start of the season - if you observe the indicated number of exclosure-related
+                             nest abandonments, we recommend you reassess the situation with updated data or pull
+                             exclosures. 
+                             The second plot indicates how many nest predations you can 
+                             tolerate if you decide not to use exclosures - if you observe the indicated number of 
+                             nest predations, we recommend reassessment or using exclosures.
+                             The plost below compare the probability of population decline with or without exclosures
                              based on your site's current conditions (dashed line) to the probability of population decline 
-                             with increasing numbers of nest abandonments (solid line).", style="font-size:12pt")
+                             with increasing numbers of nest abandonments or predations (solid line).", style="font-size:12pt")
                         ))),
-             fluidRow(
-               h3(strong("Enter Site Characteristcs"), style = "color:#000066; padding: 0px 0px 0px 10px"),
-               column(3,
-                      numericInput("Pairs", "Starting # Pairs", value=20, min=1, step=1))
-                    ),
+
          fluidRow(
-           h3(strong("Press to Calculate Threshold"), style = "color:#000066; padding: 0px 0px 0px 10px"),
+           h3(strong("If you plan use exclosures..."), style = "color:#000066; padding: 0px 0px 0px 10px"),
            column(3,
                   actionButton("threshold.data", "Calculate Threshold")
            ) #putting button in a column puts some space between button and left edge of screen 
@@ -217,13 +212,32 @@ shinyUI(fluidPage(
          fluidRow(
            column(8,
                   br(),
-                  h3(strong("Threshold Plot"), style = "color:#000066"),
+                  h3(strong("Abandonment Threshold Plot"), style = "color:#000066"),
                   plotOutput("thresh.abans")
            ) #column
          ), #fluidrow
          fluidRow(
            wellPanel(
              h3(textOutput("reassess"))
+           )
+         ),#fluidRow
+         br(),
+         fluidRow(
+           h3(strong("If you do NOT plan to use exclosures..."), style = "color:#000066; padding: 0px 0px 0px 10px"),
+           column(3,
+                  actionButton("threshold.pred.data", "Calculate Threshold")
+           ) #putting button in a column puts some space between button and left edge of screen 
+         ), #fluidrow
+         fluidRow(
+           column(8,
+                  br(),
+                  h3(strong("Predation Threshold Plot"), style = "color:#000066"),
+                  plotOutput("thresh.preds")
+           ) #column
+         ), #fluidrow
+         fluidRow(
+           wellPanel(
+             h3(textOutput("reassess.pred"))
            )
          ),#fluidRow
          br(),
@@ -238,7 +252,7 @@ shinyUI(fluidPage(
              fluidRow(
                column(6,
                 wellPanel(
-                   h2(strong("Scenario Modeling"), style = "color:#000066"),
+                   h1(strong("Scenario Modeling"), style = "color:#000066"),
                    helpText("This module allows users to explore the effects of hypothetical scenarios based on 
                             user-supplied values of predation rates, abandonment rates, and exclosure-related 
                             adult mortality risk.", style="font-size:12pt")
@@ -248,18 +262,37 @@ shinyUI(fluidPage(
         fluidRow(
           column(3,
           wellPanel(
-          h2("Choose Values", style = "color:#000066"),
+          h2(strong("Choose Values"), style = "color:#000066"),
+          fluidRow(
+            h3(strong("Enter Number of Pairs"), style = "color:#000066; padding: 0px 0px 0px 10px"),
+            column(5,
+                   numericInput("ScenPairs", "Starting # Pairs", value=20, min=1, step=1))
+          ),
+          h3(strong("Choose Parameters"), style = "color:#000066; 
+             padding: 0px 0px 0px 10px"),
+          checkboxInput("import", "Import from Decision Support Analysis"),
+          br(),
+          actionButton("reset_input", "Reset to Default Values"),
+          br(),
+          br(),
           uiOutput("resettableScenarioValues"),
-             actionButton("scenario","Press to Calculate"),
-            actionButton("reset_input", "Press to Reset Values")
-          ) #wellPanel
+             actionButton("scenario","Press to Calculate")
+             ) #wellPanel
           ),#column
           column(5,
+                 wellPanel(
+                 h2(strong("Population Growth Rate"), style = "color:#000066; padding: 0px 0px 0px 10px"),
+                 helpText("The plot below shows the predicted population growth rates with and without
+                          exclosure use based on the parameters you have chosen. The black
+                          diamonds represent the mean growth rate for each scenario, while the width of the 
+                          gray shaded area represents the relative likelihood of a given growth rate
+                          in each scenario."),
                  plotOutput("scenLambdaPlot")
+                 )#wellPanel
            )#column
           ), #fluidRow
              fluidRow(column(4,
-                             h2(strong("Trajectory Probabilities", style="color:#000066; padding:0px 0px 0px 10px"))
+                       h2(strong("Trajectory Probabilities", style="color:#000066; padding:0px 0px 0px 10px"))
              )),
              fluidRow(
                column(2),
@@ -293,25 +326,22 @@ shinyUI(fluidPage(
              ),#fluidRow
         br(),
         br(),
-        #Abandonment Tolerance for Scenario####
-        h2(strong("Abandonment Tolerance"),style="color:#000066"),
-            br(),
-            br(),
-        fluidRow(
-          h3(strong("Enter Site Characteristcs"), style = "color:#000066; padding: 0px 0px 0px 10px"),
-          column(3,
-                 numericInput("ScenPairs", "Starting # Pairs", value=20, min=1, step=1))
-        ),
+        #Abandonment and Predation Tolerance for Scenario####
+        h2(strong("If you plan to use exclosures"),style="color:#000066"),
+        
         fluidRow(
           h3(strong("Press to Calculate Threshold"), style = "color:#000066; padding: 0px 0px 0px 10px"),
           column(3,
                  actionButton("Scen.threshold.data", "Calculate Threshold")
           ) #putting button in a column puts some space between button and left edge of screen 
-        ), #fluidrow
+        ),
+
+            br(),
+
         fluidRow(
           column(8,
                  br(),
-                 h3(strong("Threshold Plot"), style = "color:#000066"),
+                 h3(strong("Abandonment Threshold Plot"), style = "color:#000066"),
                  plotOutput("scen.thresh.abans")
           ) #column
         ), #fluidrow
@@ -320,6 +350,25 @@ shinyUI(fluidPage(
             h3(textOutput("SCENreassess"))
           )
         ),#fluidRow
+        br(),
+        fluidRow(
+          h2(strong("If you do NOT plan to use exclosures..."), style = "color:#000066; padding: 0px 0px 0px 10px"),
+          column(3,
+                 actionButton("scen.threshold.pred.data", "Calculate Threshold")
+          ) #putting button in a column puts some space between button and left edge of screen 
+        ), #fluidrow
+        fluidRow(
+          column(8,
+                 br(),
+                 h3(strong("Predation Threshold Plot"), style = "color:#000066"),
+                 plotOutput("scen.thresh.preds")
+          ) #column
+        ), #fluidrow
+        fluidRow(
+          wellPanel(
+            h3(textOutput("scen.reassess.pred"))
+          )#wellpanel
+        ),#fluidrow
         downloadButton("ScenReport", "Generate HTML Report"),
         downloadButton("ScenReportWord", "Download Report in MS Word"),
         br(),
@@ -367,24 +416,23 @@ shinyUI(fluidPage(
              h3("2. Upload Data"),
              p("Using the features in the", span("Upload Data", style="color:blue"), "tab, load and double-check your 
                nest fate data."),
-             h3("3. Nest Fate Analysis"),
+             h3("3. Decision Support Analysis"),
              p("The first step in the", span("Decision Support", style="color:blue"),"tab analyzes your data to provide estimates of 
                nest hatch, abandonment, predation, and tidal- or weather-caused failure probabilities for exclosed 
-               and unexclosed nests."),
-             h3("4. Decision Support Population Modeling"),
-             p("The second section of the", span("Decision Support", style="color:blue"),"tab uses the estimates 
-               from your nest fate analysis and provides predicted population growth rates for your site with and 
-               without exclosures."),
-             h3("5. Abandonment Tolerance"),
-             p("The Abandonment Tolerance section in the", span("Decision Support", style="color:blue"),"tab is an 
-               optional model that estimates how many exclosure-related abandonments you can tolerate before 
-               reassessing or removing your exclosures."),
-             h3("6. Scenario Modeling"),
+               and unexclosed nests.It then uses the estimates from your nest fate analysis to provide predicted population growth rates
+               for your site with and without exclosures."),
+             h3("4. Abandonment and Predation Tolerance"),
+             p("The Abandonment and Predation Tolerance module in the", span("Decision Support", style="color:blue"),"tab is an 
+               optional set of models that estimate: 1) how many exclosure-related abandonments you can tolerate before reassessing or
+               removing your exclosures, and 2) how many predations you can tolerate before reassessing or putting up
+               exclosures."),
+             h3("5. Scenario Modeling"),
              p("The", span("Scenario Modeling", style="color:blue"),"section allows users to choose different
                values of predation, abandonment, and adult mortality risk, and to see the predicted outcomes of 
                exclosure use in these hypothetical scenarios.  It is useful when there are limited or no pre-existing 
-               data."),
-             h3("7. Generate Report"),
+               data, but it can also be used in conjunction with a user's existing data by importing the results of the
+               Decision Support Analysis"),
+             h3("6. Generate Report"),
              p("In both the", span("Decision Support", style="color:blue"),"and", 
                span("Scenario Modeling", style="color:blue"),"sections include buttons that will generate either 
                HTML or Word document reports summarizing the user's analyses. "),
@@ -423,6 +471,13 @@ shinyUI(fluidPage(
                you believe the current year is unusual in terms of either nest predation or abandonment rates. For 
                choosing option 2 (combine sites), consider whether the sites are likely to experience similar factors 
                that influence nest predation and adult mortality risk."),
+             
+             p("A final note about the data - if there are no exclosed nests in your dataset, then the exclosure effects 
+               for your site will be based on the coast-wide average. Therefore, if you typically do not use 
+               exclosures but want to predict the effects of using them at your site, you may want to consider 
+               adding in older data from your site that includes exclosed nests if available; otherwise, keep in
+               mind that the resulting predictions are based on average exclosure effects in combination with your 
+               site-specific predation and abandonment estimates."),
              
              
           h3("Data Format Requirements"),
@@ -531,14 +586,16 @@ shinyUI(fluidPage(
                (e.g., > 30 days), double-check the dates of that and the preceding row."),
         #######################
         #nest fate analysis section of instructions
-        h2("Nest Fate Analysis"),
+        h2("Decision Support Analysis"),
         p("Once you have uploaded and checked your data, this section analyzes your nest fate data in order 
                to estimate abandonment, predation, and flooding/sanding rates of unexclosed and exclosed nests.
                Navigate to the tab labeled", span("Decision Support", style="color:blue"), ". To begin the analysis,
-               press the button labeled", span(code("Analyze Nest Fate Data", style="color:black")), ". If you 
+               enter the number of Piping Plover pairs present at your site and then press
+                the button labeled", span(code("Analyze Nest Fate Data", style="color:black")), ". If you 
                have not yet uploaded any data, a red warning
-               will appear asking you to go back and upload data. A status bar will appear in the bottom right corner
-               of the screen saying", code("Calculating, this may take a few minutes", style="color:black"), ". NOTE: 
+               will appear asking you to go back and upload data. Two status bars will appear in the bottom right corner
+               of the screen saying", code("Calculating, this may take a few minutes", style="color:black"),"
+               and", code("Calculating Projections...", style="color:black"),". NOTE: 
                unlike in later modules, the blue status bar does not move with the progression of the model. 
                Model run time will vary but in early testing it has rarely exceeded one minute.  
                Once the model has finished running, the status bar will disappear and 
@@ -560,36 +617,19 @@ shinyUI(fluidPage(
       #############
       #Decision Support Instructions Section
       h2("Decision Support Population Modeling"),
-      p("IMPORTANT: The models in this section use values from your", span(strong("Nest Fate Analysis")), ", thus 
-        you must have completed that section first before using this one."),
       p("The", span(strong("Decision Support Population Modeling")), "section in the", span("Decision Support", style="color:blue"), "tab provides
        the analysis summaries that you can use to make a decision about exclosure use. The analyses in this module take the
        estimates of predation risk, abandonment risk, and exclosure effects that were estimated for your site
        in the", span(strong("Nest Fate Analysis")), "section and plug them into a stochastic population projection model in order 
        to predict population growth rate at your site with and without the use of exclosures."),
-      h3("3D Guideline Plot"),
-      p("The first thing you see on this page is a 3-dimensional surface plot. The data displayed here are the result 
-        of simulations used to calculate the expected gain (which can be positive or negative) in population growth 
-        rate at a hypothetical site as a function of that site's exclosure-related abandonment risk and predation
-        risk for unexclosed nests. Positive values are shown in green and represent an increase in population growth 
-        with exclosures compared to not using exclosures (note: population growth rate might be negative both with
-        and without exclosures at a particular site, and yet the", span(em("difference")), "in growth rate between using exclosures
-        and not using them, shown in the 3-D plot, could still be positive). Yellow, orange, and red values depict 
-        increasingly negative effects of exclosure use on population growth rate. The solid black line shows where 
-        the difference is exactly zero, i.e. population growth rate does not depend on whether or not exclosures 
-        are used. If you have already run the nest fate analysis, a point representing your site's location on 
-        this surface will show up, surrounded by a circle that represents the degree of uncertainty in your site's
-        location. This plot is not intended to be used alone to make the decision; rather it is intended as a 
-        supporting visual aid."),
-      img(src="threeDplot.png"),
-      h3("Population Growth Rate"),
-      p("This section has a button for the user to click, which retrieves the information from the nest fate 
-        analysis and performs the population growth rate calculations. Once the calculations are complete 
-        (it may take several minutes), a plot appears underneath the button that displays the mean predicted
-        population growth rate with and without exclosures, bounded by the 95% prediction intervals. The horizontal
-        bar in the graph indicates the location of growth rate = 1, in other words a stationary population; values 
-        that appear above this line indicate a growing population, while values below this line indicate a 
-        declining population. "),
+      p("After you have analyzed your nest fate data, a plot appears in this section that displays the mean predicted
+        population growth rate with and without exclosures. This plot is a violin plot, which depicts the means 
+        as black diamonds, and the area shaded in gray represents the relative probability of each outcome - 
+        the wider the gray area is at a given growth rate, the more frequently that growth rate occurred during
+        the model simulations. The plots may have long tails that represent extreme but unlikely growth rates.
+        The horizontal bar in the graph indicates the location of growth rate = 1, in other words a stationary
+        population; values that appear above this line indicate a growing population, while values below this 
+        line indicate a declining population. "),
       img(src="lambdaPlot.png"),
       h3("Making a Decision"),
       p("Below the plot is a table that summarizes the outcomes of the population growth predictions; 
@@ -610,10 +650,11 @@ shinyUI(fluidPage(
         a site-specific management decision."),
       
       #Abandonment Tolerance section
-      h2("Abandonment Tolerance"),
+      h2("Abandonment and Predation Tolerance"),
       p("IMPORTANT: The models in this section use values from 
-        your", span(strong("Nest Fate Analysis")), "and", span(strong("Decision Support Population Modeling")), ", thus 
+        your", span(strong("Nest Fate Analysis")), ", thus 
         you have to have completed those sections first before using this one."),
+      h2("Abandonment Tolerance"),
       p("If you have chosen to use exclosures, the", span(strong("Abandonment Tolerance")), "section provides 
         guidance on how many total abandonments your site can handle before you need to reassess or reverse your 
         decision, given that conditions might change unexpectedly or might not match the previous year's conditions. 
@@ -630,19 +671,35 @@ shinyUI(fluidPage(
       p("An important assumption of this model is that whatever is causing exclosure-related abandonments 
         is not also targeting unexclosed nests. Such a scenario is not currently accommodated in this model 
         but may be developed in future versions. "),
-      p("To proceed, first select the number of pairs present at your site
-        under", span(strong("Starting # Pairs")), ". Then press
+      p("To proceed, press
         the button labeled", span(code("Calculate Threshold", style="color:black")), ". A 
         status bar will appear in the bottom left of
-        the screen with text stating", span(code("Calculating Thresholds", style="color:black")), ". This may take a few minutes, 
-        after which a plot will appear underneath the", span(strong("Threshold Plot")), "heading."),
-      img(src="thresholdPlot.png"),
+        the screen with text stating", span(code("Calculating Abandonment Thresholds", style="color:black")), ". This may take a few minutes, 
+        after which a plot will appear underneath the", span(strong("Abandonment Threshold Plot")), "heading."),
+      img(src="abanThresholdPlot.png"),
+      h3("Predation Tolerance"),
+      p("If you have chosen not to use exclosures, the", span(strong("Predation Tolerance")), "section provides guidance on 
+        how many total nest predations your site can handle before you need to reassess or reverse your 
+        decision, given that conditions might change unexpectedly or might not match the previous year's
+        conditions. Predation tolerance is estimated by simulating an increasing level of predation risk
+        while keeping abandonment risk constant (with mortality risk set at the expert opinion level of 
+        70% per observed abandonment, with or without exclosures), and compares the resulting probability 
+        of population decline to the probability of decline if exclosures were used."),
+      br(),
+      p("To proceed, press the button labeled", span(code("Calculating Threshold", style="color:black")), "underneath the heading",
+        "A status bar will appear in the bottom left of the screen with text 
+        stating", span(code("Calculating Predation Thresholds", style="color:black")), "This may take a few minutes, after which a plot will
+        appear underneath the", span(strong("Predation Threshold Plot")), "heading."),
+      img(src="predThresholdPlot.png"),
       h3("Interpretation"),
-      p("The thresholds plot will have a curve with cross-hatching underneath, which represents the probability
-        of population decline as a function of observed exclosure-related abandonments. The dashed horizontal 
-        line represents the reference condition of no exclosures. Where the two lines intersect is the point at
-        which probability of decline with and without exclosures is identical; this number will also appear in the
-        text below the plot as", span(strong("Reassess or pull exclosures after X observed nest abandonments")), "."),
+      p("The thresholds plots will have a curve with cross-hatching underneath, which represents the 
+        probability of population decline as a function of observed exclosure-related abandonments or
+        nest predations. The dashed horizontal line represents the reference condition of exclosure use
+        or no exclosures, depending on the plot. Where the two lines intersect is the point at which
+        probability of decline with and without exclosures is identical; this number will also appear 
+        in the text below the plot as", 
+        span(code("Reassess or pull exclosures after X observed nest abandonments", style="color:black")), 
+        "or", span(code("Reassess or pull exclosures after X observed nest predations",style="color:black")), "."),
       p("If you observe the threshold number of abandonments at your site, work through the following flow chart to 
         decide whether you should pull exclosures or reassess your site condition by analyzing new data."),
       img(src="thresholdFlowchart.png"),
@@ -660,25 +717,31 @@ shinyUI(fluidPage(
         average value of 0.4 (e.g., 40% of chicks survive from hatch to fledge). If your site likely experiences 
         decreased chick survival, you can change this value to see how it might affect your results."),
       p("There are four sliders that allow users to toggle values for predation risk without exclosures, 
-        abandonment risk with exclosures, probability of an adult mortality given nest abandonment, and chick survival. 
-        The default values are set to range-wide average values for predation and abandonment based on our 2015
-        and 2016 analyses, the default mortality risk is based on the average of four expert opinion estimates,
-        and the default chick survival is based on range-wide estimates from the literature. 
-        To change the default values, click on the gray circle on the slider and move it to your desired value.  
-        Once you have selected your values, click the
-        button labelled", span(code("Press to Calculate", style="color:black")),". If 
-        at any time you want to reset the values to their default settings, 
-        click the", span(code("Press to Reset Values", style="color:black")),"button."),
+        abandonment risk with exclosures, probability of an adult mortality given nest abandonment, 
+        and chick survival. The default values are set to range-wide average values for predation 
+        and abandonment based on our 2015 and 2016 analyses, the default mortality risk is based on 
+        the average of four expert opinion estimates, and the default chick survival is based on 
+        range-wide estimates from the literature. If you wish to import values from your previous
+        analysis under the", span("Decision Support", style="color:blue"), "tab, check the box marked",
+        span(code("Import from Decision Support Analysis", style="color:black")), ". This will move the slider values to match those of your
+        site, as well as importing other hidden parameters such as flooding risk and the effects of 
+        exclosures on predation. To change the slider values, click on the gray circle on the slider 
+        and move it to your desired value. Once you have selected your values, click the button 
+        labelled", span(code("Press to Calculate", style="color:black")), ". If at any time you want to reset the values to their default 
+        settings, click the", span(code("Reset to Default Values", style="color:black")), "button, and also uncheck
+        the", span(code("Import from Decision Support Analysis", style="color:black")), "box."),
       p("The model will run for up to 30 seconds, and once it is completed the results will appear on the screen. 
         To the right of the sliders a graph will appear showing predicted growth rates with and without exclosures.
         Below the sliders, the table will be populated with probabilities of rapid growth (>5% annually), any growth,
         any decline, and rapid decline (>5% annually), along with the relative effects of exclosure use on these
         probabilities."),
       img(src="scenModelExample.png"),
+      img(src="scenModelExample2.png"),
+      img(src="scenModelExample3.png"),
       p("For discussion on how to interpret these values and come to a decision, please see the section
         above titled", span(strong("Making a Decision")),".The", span("Scenario Modeling", style="color:blue"), "tab 
-        includes an", span(strong("Abandonment Tolerance")),"section to calculate how many 
-        nest abandonments a site can sustain before the benefits of exclosures do not exceed the risks,
+        includes an", span(strong("Abandonment and Predation Tolerance")),"section to calculate how many 
+        nest abandonments a site can sustain before the benefits of exclosures do not exceed the risks (or vice-versa)
         based on the values for predation, abandonment, and mortality rated that the user has chosen; 
         for details on use and interpretation of this section, please refer to the section above
         called ", span(strong("Abandonment Tolerance")),". 16. For modeling a scenario in which e.g., 
@@ -697,10 +760,10 @@ shinyUI(fluidPage(
         Click on", span(code("Download Report in MS Word", style="color:black")),"to download the report as a word file that
         can be opened in Microsoft Word. Reports from the", span("Decision Support", style="color:blue"), "tab contain
         a summary of the data entered, nest fate probabilities, population modeling plot and trajectory probabilities,
-        starting # of pairs, and the abandonment tolerance plot. Sections not run are left blank in the report or
+        starting # of pairs, and the abandonment and predation tolerance plots. Sections not run are left blank in the report or
         populated with NAs. Reports for from the", span("Scenario Modeling", style="color:blue"), "tab include the
         values of predation, abandonment, and mortality risk chosen, population modeling plot and trajectory 
-        probabilities, starting # of pairs, and the abandonment tolerance plot."),
+        probabilities, starting # of pairs, and the abandonment and predation tolerance plots."),
       br(),
       br()
     )#intructions panel
