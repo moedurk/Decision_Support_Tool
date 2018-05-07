@@ -2,11 +2,11 @@ library(rhandsontable)
 library(shiny)
 library(jagsUI)
 library(MASS) #needed for mvrnorm()
-library(fields) #needed for image.plot()
-library(plotrix) #needed for draw.ellipse
 library(BB) #needed for dfsane()
-library(car) #needed for ellipse()
 library(rmarkdown) #needed for generating downloadable reports
+library(ggplot2)
+
+
 
 #LOAD VALUES AND FUNCTIONS####
 
@@ -48,20 +48,21 @@ h.un.calc<-function(parms){
   r2=parms$r2
   r3=parms$r3
   h.un <- h + (o*r2*h + a*(1-m)*r2*h) + o*r2*(o*r3*h + a*(1-m)*r3*h) + a*(1-m)*r2*(o*r3*h+a*(1-m)*r3*h) #revised; mistake somewhere in original
-  output<-list(h.un=h.un, a=a)
+  output<-list(h.un=h.un, a=a, p=pred.p)
   return(output)
 }
 #logodds####
 logodds=function(x){log(x/(1-x))}
 
 #projection function####
-lambda.calc <- function(parms, sd.parms, eta.a=0, eta.p=0, n.ex=0, n.iter=1000){ #take out etas - not used
+lambda.calc <- function(parms, sd.parms, eta.a=0, eta.p=0, beta.a.add=0, n.ex=0, n.iter=1000){ #take out etas - not used
   n.iter=n.iter
   eta.a=eta.a
   eta.p=eta.p
   lambda <- rep(NA, n.iter)
   aban.counts.ex <- rep(NA, n.iter)
   aban.counts.un <- rep(NA, n.iter)
+  pred.counts.un <- rep(NA, n.iter)
   dead.females.ex <- rep(NA, n.iter)
   
   #run iterations
@@ -76,7 +77,7 @@ lambda.calc <- function(parms, sd.parms, eta.a=0, eta.p=0, n.ex=0, n.iter=1000){
       r3 = rnorm(1, logodds(parms$r3), sd.parms$r3),
       m = plogis(rnorm(1,qlogis(parms$m), sd.parms$m)),
       alpha.f = rnorm(1, parms$alpha.f, sd.parms$alpha.f),
-      aban.coeff = mvrnorm(1, c(parms$alpha.a, parms$beta.a.ex), sd.parms$vcovAban),
+      aban.coeff = mvrnorm(1, c(parms$alpha.a, parms$beta.a.ex+beta.a.add), sd.parms$vcovAban),
       pred.coeff = mvrnorm(1, c(parms$alpha.p, parms$beta.p.ex), sd.parms$vcovPred)
     )
     parms.iter$alpha.a <- parms.iter$aban.coeff[1] + eta.a
@@ -91,6 +92,7 @@ lambda.calc <- function(parms, sd.parms, eta.a=0, eta.p=0, n.ex=0, n.iter=1000){
     h.un<-h.un.calc(parms=parms.iter)$h.un
     h.ex<-h.ex.calc(parms=parms.iter)$h.ex
     a.p.ex<-h.ex.calc(parms=parms.iter)$a
+    p.p.un <- h.un.calc(parms=parms.iter)$p
     
     #fecundity
     Fa<-parms.iter$yt*(2*parms$E*(n.ex*h.ex + (1-n.ex)*h.un))
@@ -105,6 +107,7 @@ lambda.calc <- function(parms, sd.parms, eta.a=0, eta.p=0, n.ex=0, n.iter=1000){
     
     aban.counts.ex[i]<-a.p.ex*n.ex*sum(parms$Na0,parms$Ns0)
     aban.counts.un[i]<-a.p.un*(1-n.ex)*sum(parms$Na0,parms$Ns0)
+    pred.counts.un[i]<-p.p.un*(1-n.ex)*sum(parms$Na0,parms$Ns0)
     dead.females.ex[i]<- m.s.ex*parms$Ns0 + m.a.ex*parms$Na0
     
     #annual survival rates	
@@ -122,7 +125,8 @@ lambda.calc <- function(parms, sd.parms, eta.a=0, eta.p=0, n.ex=0, n.iter=1000){
     Lesmat<-matrix(c(Phij.ann*Fs*f,Fa*Phia.ann,Phij.ann*f,Phia.ann),2,2,byrow=TRUE)  #found mistake in original; entry [2,1] had adult survival, not juv
     lambda[i]<-eigen(Lesmat)$values[1]
   } #n.iter
-  output <- list(lambda=lambda, aban.counts.ex=aban.counts.ex, aban.counts.un=aban.counts.un, dead.females.ex=dead.females.ex)
+  output <- list(lambda=lambda, aban.counts.ex=aban.counts.ex, aban.counts.un=aban.counts.un, 
+                 dead.females.ex=dead.females.ex, pred.counts.un=pred.counts.un)
   return(output)
 }
 
@@ -168,33 +172,22 @@ sd.parms.init <- list(
   vcovPred = matrix(c(0.116^2, -0.007, -0.007, 0.272^2),2,2)
 )
 
+
+
 #Example data for download####
 exampleDat <- read.csv("sampleData.csv", header=T)
 
-#data needed for 3D plots and confidence intervals####
-#for 3D plot surface:
-z <- as.matrix(read.csv("zvalues.csv", header=F))
-predictors <- read.csv("predictors.csv",header=T)
-x <- predictors$x
-y<-predictors$y
-
-#for extracting z values for site point and CIs:
-df2<-read.csv("predictionFrame.csv", header=T)
-lambda.loess2 = loess(lambda.diff~a.prob.ex*p.prob.un, data = df2) #prediction function
-
-#make colors for 3D plot
-nrz<-length(x)-1
-ncz<-length(x)-1
-
-jet.colors <-  colorRampPalette(c("darkred","red","orange","yellow","green"))
-nbcol<-64
-color<-jet.colors(nbcol)
-zfacet<-z[-1,-1]+z[-1,-ncz]+z[-nrz,-1]+z[-nrz,-ncz]
-facetcol<-cut(zfacet,nbcol)
-
 #SERVER####
 shinyServer(
- function(input, output) {
+ function(input, output, session) {
+   
+   #Downloadable instructions####
+   output$instructions <- downloadHandler(
+     filename = "PiperEx_Instructions.pdf",
+     content = function(file) {
+       file.copy("www/PiperEx_Instructions.pdf", file)
+     }
+   )
 
 #upload and edit nest data  
   nestdata <- reactiveValues()
@@ -204,6 +197,29 @@ shinyServer(
     nestdata$nestdata <- read.csv(input$file$datapath, stringsAsFactors = F)
     nestdata$nestdata$Date <- as.Date(nestdata$nestdata$Date, format="%m/%d/%Y")
     nestdata$nestdata$Interval <- as.integer(rep(NA, length(nestdata$nestdata[,1])))
+    
+    nestdata$nestdata <- nestdata$nestdata[order(nestdata$nestdata$Nest.ID, nestdata$nestdata$Date),]
+    
+    Interval<-rep(NA, length(nestdata$nestdata$Nest.ID))
+    postFate <- rep(0, length(nestdata$nestdata$Nest.ID))
+    
+    for(i in 2:length(nestdata$nestdata$Nest.ID)){
+      if (nestdata$nestdata$Nest.ID[i]==nestdata$nestdata$Nest.ID[i-1] && !is.na(nestdata$nestdata$Date[i]) &&
+          !is.na(nestdata$nestdata$Date[i-1])) {Interval[i]=(as.numeric(nestdata$nestdata$Date[i]-nestdata$nestdata$Date[i-1]))}
+      else {Interval[i]=NA}
+      
+      if(nestdata$nestdata$Nest.ID[i]==nestdata$nestdata$Nest.ID[i-1] && nestdata$nestdata$Status[i-1]==6)
+        postFate[i] <- 1
+      if(nestdata$nestdata$Nest.ID[i]==nestdata$nestdata$Nest.ID[i-1] && nestdata$nestdata$Status[i-1]==2)
+        postFate[i] <- 1
+      if(nestdata$nestdata$Nest.ID[i]==nestdata$nestdata$Nest.ID[i-1] && nestdata$nestdata$Status[i-1]==4)
+        postFate[i] <- 1
+    }
+    
+    nestdata$nestdata$Interval <- Interval
+    nestdata$nestdata <- nestdata$nestdata[postFate==0,] #remove post-fate rows
+    nestdata$nestdata <- subset(nestdata$nestdata, select=c("Nest.ID","Date","Status","Exclosed","Interval"))
+    
     }
   })
   
@@ -214,52 +230,16 @@ shinyServer(
     
   })
   
-  observeEvent(input$clean,{
-    if(input$clean && !is.null(nestdata$nestdata)){
-      nestdata$nestdata <- nestdata$nestdata[order(nestdata$nestdata$Nest.ID, nestdata$nestdata$Date),]
-          
-          Interval<-rep(NA, length(nestdata$nestdata$Nest.ID))
-          postHatch <- rep(0, length(nestdata$nestdata$Nest.ID))
-          
-          for(i in 2:length(nestdata$nestdata$Nest.ID)){
-            if (nestdata$nestdata$Nest.ID[i]==nestdata$nestdata$Nest.ID[i-1] && !is.na(nestdata$nestdata$Date[i]) &&
-                !is.na(nestdata$nestdata$Date[i-1])) {Interval[i]=(as.numeric(nestdata$nestdata$Date[i]-nestdata$nestdata$Date[i-1]))}
-            else {Interval[i]=NA}
-            
-            if(nestdata$nestdata$Nest.ID[i]==nestdata$nestdata$Nest.ID[i-1] && nestdata$nestdata$Status[i-1]==6)
-              postHatch[i] <- 1
-          }
-          nestdata$nestdata$Interval <- Interval
-          nestdata$nestdata <- nestdata$nestdata[postHatch==0,] #remove post-hatch rows
-          nestdata$nestdata <- subset(nestdata$nestdata, select=c("Nest.ID","Date","Status","Exclosed","Interval"))
-      
-    }
-  })
-  
-
 #NEST FATE ANALYSIS####   
  
   survival <- eventReactive(input$analyze.go,{
     validate(
       need(!is.null(nestdata$nestdata), "Please upload data"),
-      need(length(which(is.na(nestdata$Date)))<1, "Warning: missing dates detected. Double-check date formatting.")
+      need(length(which(is.na(nestdata$nestdata$Date)))<1, "Warning: missing dates detected. Double-check date formatting.")
     )
     withProgress(message = "Calculating, this may take a few minutes...",{
      nestdata <- nestdata$nestdata
      nest.count <- length(unique(nestdata$Nest.ID))
-     
-     #in case it hasn't been done earlier
-     nestdata<- nestdata[order(nestdata$Nest.ID, nestdata$Date),]
-     postHatch <- rep(0, length(nestdata$Nest.ID))
-     
-     for(i in 2:length(nestdata$Nest.ID)){
-       if (nestdata$Nest.ID[i]==nestdata$Nest.ID[i-1] && !is.na(nestdata$Date[i]) &&
-           !is.na(nestdata$Date[i-1])) {nestdata$Interval[i]=(as.numeric(nestdata$Date[i]-nestdata$Date[i-1]))}
-       if(nestdata$Nest.ID[i]==nestdata$Nest.ID[i-1] && nestdata$Status[i-1]==6)
-         postHatch[i] <- 1
-     }
- 
-     nestdata <- nestdata[postHatch==0,] #remove post-hatch rows
      nestdata<-nestdata[!is.na(nestdata$Interval[]),] #remove first nest check
      nestdata<-nestdata[nestdata$Interval[]>=1,] #removes any 0 or negative (=error) nest check intervals
      
@@ -293,7 +273,6 @@ shinyServer(
        need(!is.na(max(nestdata$Exclosed)), "Cannot Proceed: Missing data in exclosure column. Please fill in missing data.")
 
      )
-     
      
      #bundle data and prep for jags
      win.data<-list(ex = nestdata[,"Exclosed"],n=n,interval=nestdata[,"Interval"],Fate=Fate,
@@ -392,7 +371,7 @@ output$SmallSampleWarn <- renderText({
   
 #LAMBDA####
   
-  trajectory<-eventReactive(input$button, {
+  trajectory<-reactive( {
    
     withProgress(message = "Calculating Projections ..", {
 
@@ -413,40 +392,49 @@ output$SmallSampleWarn <- renderText({
       growth.steep.un <-mean(traj.noEx$lambda>1.05)
       
       #prepare output
-
+      lambda.plot <- data.frame(
+        Growth = c( traj.Ex$lambda[traj.Ex$lambda<2], traj.noEx$lambda[traj.noEx$lambda<2]), #remove extremes
+        Exclosures = c(rep("Yes", length(traj.Ex$lambda[traj.Ex$lambda<2])), rep("No", length(traj.noEx$lambda[traj.noEx$lambda<2])))
+      )
+      #reorder factor level Yes/No for plotting
+      lambda.plot$Exclosures <- factor(lambda.plot$Exclosures, levels(lambda.plot$Exclosures)[c(2,1)])
+ 
       list(lambda.un=traj.noEx$lambda, lambda.ex=traj.Ex$lambda, aban.counts.ex = traj.Ex$aban.counts.ex,
            decline.ex=decline.ex, decline.un=decline.un, decline.steep.ex=decline.steep.ex, decline.steep.un=decline.steep.un,
-           growth.ex=growth.ex, growth.un=growth.un, growth.steep.ex=growth.steep.ex, growth.steep.un=growth.steep.un)
+           growth.ex=growth.ex, growth.un=growth.un, growth.steep.ex=growth.steep.ex, growth.steep.un=growth.steep.un,
+           lambda.plot=lambda.plot)
       
     })#withProgress
     
   })#trajectory
   
   lambda.summary <- reactiveValues(lambda.ex=NA, lambda.un=NA)
-  
- observeEvent(input$button, {
-    if(input$button) {
+
+ observeEvent(input$analyze.go, {
+    if(input$analyze.go) {
       lambda.summary$lambda.un <- trajectory()$lambda.un; lambda.summary$lambda.ex <- trajectory()$lambda.ex
+
     }
   })
  
   ################################################################################################### lamdba
  
 #THRESHOLDS####
+ #Abandonment####
   n.vals <- 200 #number of aban values to draw for use in simulations
   ni<-200 #number of iterations per draw
   thresholds<-eventReactive(input$threshold.data, {
-    withProgress(message = "Calculating Thresholds...", {
+    withProgress(message = "Calculating Abandonment Thresholds...", {
       #draw abandonment values
-      eta.a.vec <- runif(n.vals,-2,4)
-      eta.a.vec <- eta.a.vec[sort.list(eta.a.vec)] #sort from low to high; makes plotting later easier
+      beta.a.vec <- runif(n.vals,-2,4)
+      beta.a.vec <- beta.a.vec[sort.list(beta.a.vec)] #sort from low to high; makes plotting later easier
       #define stuff
       lambda.mat.ex <- lambda.mat.un <- abans.ex <- matrix(NA, nrow=ni, ncol=n.vals)
       
       #run projection models
       for(i in 1:n.vals){ 
-        growth.ex <- lambda.calc(parms=parms(), sd.parms=sd.parms(), eta.a=eta.a.vec[i], n.ex=1, 
-                                 n.iter=ni)
+        growth.ex <- lambda.calc(parms=parms(), sd.parms=sd.parms(),n.ex=1, 
+                                 n.iter=ni, beta.a.add=beta.a.vec[i])
         lambda.mat.ex[,i] <- growth.ex$lambda
         abans.ex[,i] <- growth.ex$aban.counts.ex
         incProgress(1/n.vals) #progress bar for simulations 
@@ -468,102 +456,231 @@ output$SmallSampleWarn <- renderText({
            aban.tolerance=aban.tolerance)
     }) #thresholds withProgress
   }) #thresholds 
+  
+  #Predation####
+  pred.thresholds<-eventReactive(input$threshold.pred.data, {
+    withProgress(message = "Calculating Predation Thresholds...", {
+      #draw abandonment values
+      eta.p.vec <- runif(n.vals,-2,2)
+      eta.p.vec <- eta.p.vec[sort.list(eta.p.vec)] #sort from low to high; makes plotting later easier
+      #define stuff
+      lambda.mat.ex <- lambda.mat.un <- preds.un <- matrix(NA, nrow=ni, ncol=n.vals)
+      
+      #run projection models
+      for(i in 1:n.vals){ 
+        growth.un <- lambda.calc(parms=parms(), sd.parms=sd.parms(), n.ex=0, 
+                                 eta.p = eta.p.vec[i], n.iter=ni)
+        lambda.mat.un[,i] <- growth.un$lambda
+        preds.un[,i] <- growth.un$pred.counts.un
+        incProgress(1/n.vals) #progress bar for simulations 
+      }
+      #summarize data  
+      ref.line <- lambda.calc(parms=parms(), sd.parms=sd.parms(),   
+                              n.ex=1, n.iter=ni) #exclosed reference
+      preds.un.means <- colMeans(preds.un)
+      prob.decline <- prob.decline.ref <- rep(NA, n.vals)
+      prob.decline.ref <- mean(ref.line$lambda[]<1)
+      for (i in 1:n.vals){
+        prob.decline[i] <- length(which(lambda.mat.un[,i]<1))/ni 
+      }
+      prob.curv <- smooth.spline(preds.un.means, prob.decline)
+      diffs <- abs(prob.curv$y-prob.decline.ref)
+      pred.tolerance <- round(prob.curv$x[min(which(diffs[]==min(diffs)))],0)
+      #package data for output  
+      list(prob.decline=prob.decline, prob.decline.ref=prob.decline.ref, preds.un.means=preds.un.means, prob.curv=prob.curv,
+           pred.tolerance=pred.tolerance)
+    }) #thresholds withProgress
+  }) #thresholds.pred 
 #########################################################################################################
 
-thresh.summary <- reactiveValues(prob.decline=NA, prob.decline.ref=NA, aban.ex.means=NA, prob.curv=NA,aban.tolerance=NA)  
-
+thresh.aban.summary <- reactiveValues(prob.decline=NA, prob.decline.ref=NA, aban.ex.means=NA, prob.curv=NA,aban.tolerance=NA)  
+thresh.pred.summary <- reactiveValues(prob.decline=NA, prob.decline.ref=NA, preds.un.means=NA, prob.curv=NA,pred.tolerance=NA)  
+  
 observeEvent(input$threshold.data, {
   if(input$threshold.data) {
-    thresh.summary$prob.decline <- thresholds()$prob.decline; thresh.summary$prob.decline.ref <- thresholds()$prob.decline.ref;
-    thresh.summary$aban.ex.means <- thresholds()$aban.ex.means; thresh.summary$prob.curv <- thresholds()$prob.curv;
-    thresh.summary$aban.tolerance <- thresholds()$aban.tolerance
+    thresh.aban.summary$prob.decline <- thresholds()$prob.decline; thresh.aban.summary$prob.decline.ref <- thresholds()$prob.decline.ref;
+    thresh.aban.summary$aban.ex.means <- thresholds()$aban.ex.means; thresh.aban.summary$prob.curv <- thresholds()$prob.curv;
+    thresh.aban.summary$aban.tolerance <- thresholds()$aban.tolerance
+    
+
   }
-})  
+}) 
+
+observeEvent(input$threshold.pred.data,{
+  if(input$threshold.pred.data){
+    thresh.pred.summary$prob.decline <- pred.thresholds()$prob.decline; 
+    thresh.pred.summary$prob.decline.ref <- pred.thresholds()$prob.decline.ref;
+    thresh.pred.summary$preds.un.means <- pred.thresholds()$preds.un.means; 
+    thresh.pred.summary$prob.curv <- pred.thresholds()$prob.curv;
+    thresh.pred.summary$pred.tolerance <- pred.thresholds()$pred.tolerance
+  }
+})
     
 #SCENARIO MODELING####
+
   
-  risk.select<-reactive({  #retrieve selected values for abandonment and predation
-    list(
-      a=sliderInput$abanRisk,
-      p=sliderInput$predRisk
-    )
-  })
-  
+#back-transform inputs to get alpha.p and beta.a.ex values
+back.calc <- function(x){
+  alpha.a <- mean.parms$alpha.a
+  alpha.p <- x[2]
+  alpha.f <- mean.parms$alpha.f
+  beta.a.ex <- x[1]
+  beta.p.ex <- mean.parms$beta.p.ex
+  a <- x[3]
+  p <- x[4]
+  y <- rep(NA,2)
+  #linear predictors:
+  linp.ex <- exp(alpha.p + beta.p.ex)
+  linp <- exp(alpha.p)
+  linf <- exp(alpha.f)
+  lina.ex <- exp(alpha.a + beta.a.ex)
+  lina <- exp(alpha.a)
+  #denominator
+  den.ex <- 1 + linp.ex + linf + lina.ex
+  den <- 1 + linp + linf + lina
+  surv.ex <- 1/(den.ex) #daily survival probability for exclosed nests
+  surv <- 1/den #daily survival probability for unexclosed nests
+  #solve for beta.a.ex given a, with y[1] set to 0:
+  y[1] <- ((lina.ex/den.ex)/(1-surv.ex))*(1-surv.ex^34)-a 
+  #take equation p = (stuff) and substract p (make y[2] 0)
+  y[2] <- ((linp/den)/(1-surv))*(1-surv^34)-p
+  y[3] <- a-a
+  y[4] <- p-p
+  y
+}
+
+#supply 1 and -4 as initial parameter value guesses
+parm.est <- reactive({
+  list(
+  beta.a.ex = dfsane(c(1,-4,input$abanRisk/100,input$predRisk/100),back.calc)$par[1],
+  alpha.p = dfsane(c(1,-4,input$abanRisk/100,input$predRisk/100),back.calc)$par[2]
+  )})
+
+
+parms.scen <- reactive({
+  list(
+    Na0 = (input$ScenPairs)/2,
+    Ns0 = (input$ScenPairs)/2,
+    yt=0.99,
+    ys=0.68,
+    Phij=0.52,  
+    Phia=0.74,
+    f=input$fledge/100,
+    m=input$mortality/200,
+    E = 0.94,
+    r2 = 0.7,
+    r3 = 0.7,
+    beta.a.ex = parm.est()$beta.a.ex,
+    beta.p.ex = mean.parms$beta.p.ex,
+    alpha.a = mean.parms$alpha.a,
+    alpha.p = parm.est()$alpha.p,
+    alpha.f = mean.parms$alpha.f
+  )})
+
+#back-transform inputs to get alpha.p and beta.a.ex values
+back.calc.import <- function(x){
+  alpha.a <- survival()$alpha.a
+  alpha.p <- x[2]
+  alpha.f <- survival()$alpha.f
+  beta.a.ex <- x[1]
+  beta.p.ex <- survival()$beta.p.ex
+  a <- x[3]
+  p <- x[4]
+  y <- rep(NA,2)
+  #linear predictors:
+  linp.ex <- exp(alpha.p + beta.p.ex)
+  linp <- exp(alpha.p)
+  linf <- exp(alpha.f)
+  lina.ex <- exp(alpha.a + beta.a.ex)
+  lina <- exp(alpha.a)
+  #denominator
+  den.ex <- 1 + linp.ex + linf + lina.ex
+  den <- 1 + linp + linf + lina
+  surv.ex <- 1/(den.ex) #daily survival probability for exclosed nests
+  surv <- 1/den #daily survival probability for unexclosed nests
+  #solve for beta.a.ex given a, with y[1] set to 0:
+  y[1] <- ((lina.ex/den.ex)/(1-surv.ex))*(1-surv.ex^34)-a 
+  #take equation p = (stuff) and substract p (make y[2] 0)
+  y[2] <- ((linp/den)/(1-surv))*(1-surv^34)-p
+  y[3] <- a-a
+  y[4] <- p-p
+  y
+}
+
+parm.est.import <- reactive({
+  list(
+    beta.a.ex = dfsane(c(1,-4,input$abanRisk/100,input$predRisk/100),back.calc.import)$par[1],
+    alpha.p = dfsane(c(1,-4,input$abanRisk/100,input$predRisk/100),back.calc.import)$par[2]
+  )})
+
+
+parms.import <- reactive({
+  list(
+    Na0 = (input$ScenPairs)/2,
+    Ns0 = (input$ScenPairs)/2,
+    yt=0.99,
+    ys=0.68,
+    Phij=0.52,  
+    Phia=0.74,
+    f=input$fledge/100,
+    m=input$mortality/200,
+    E = 0.94,
+    r2 = 0.7,
+    r3 = 0.7,
+    beta.a.ex = parm.est.import()$beta.a.ex,
+    beta.p.ex = survival()$beta.p.ex,
+    alpha.a = survival()$alpha.a,
+    alpha.p = parm.est.import()$alpha.p,
+    alpha.f = survival()$alpha.f
+  )})
+
+sd.parms.scen <- reactive({
+  list(
+    vcovSurv=matrix(c((logodds(parms.scen()$Phij)*CV)^2,logodds(parms.scen()$Phij)*CV*logodds(parms.scen()$Phia)*CV, 
+                      logodds(parms.scen()$Phij)*CV*logodds(parms.scen()$Phia)*CV, (logodds(parms.scen()$Phia)*CV))^2,2,2),
+    sd.f = abs(logodds(parms.scen()$f))*0.06,
+    yt = logodds(parms.scen()$yt)*CV,
+    ys = logodds(parms.scen()$ys)*CV,
+    r2 = abs(logodds(parms.scen()$r2))*CV,
+    r3 = abs(logodds(parms.scen()$r3))*CV,
+    m = min(abs(logodds(parms.scen()$m))*1.04,abs(logodds(parms.scen()$m+0.01))*1.04),  #use 0.01 if value of 0 entered
+    alpha.f = sd.parms.init$alpha.f,
+    vcovAban = sd.parms.init$vcovAban,
+    vcovPred = sd.parms.init$vcovPred
+  )})
+
+sd.parms.import <- reactive({
+  list(
+    vcovSurv=matrix(c((logodds(parms.import()$Phij)*CV)^2,logodds(parms.import()$Phij)*CV*logodds(parms.import()$Phia)*CV, 
+                      logodds(parms.import()$Phij)*CV*logodds(parms.import()$Phia)*CV, (logodds(parms.import()$Phia)*CV))^2,2,2),
+    sd.f = abs(logodds(parms.import()$f))*0.06,
+    yt = logodds(parms.import()$yt)*CV,
+    ys = logodds(parms.import()$ys)*CV,
+    r2 = abs(logodds(parms.import()$r2))*CV,
+    r3 = abs(logodds(parms.import()$r3))*CV,
+    m = min(abs(logodds(parms.import()$m))*1.04,abs(logodds(parms.import()$m+0.01))*1.04),  #use 0.01 if value of 0 entered
+    alpha.f = sd.parms.init$alpha.f,
+    vcovAban = sd.parms.init$vcovAban,
+    vcovPred = sd.parms.init$vcovPred
+  )})
+
 #scenario modeling function  
   scenario <- eventReactive(input$scenario,
                             {withProgress(message = "Calculating ..",{
-                              
-                              #back-transform inputs to get alpha.p and beta.a.ex values
-                              back.calc <- function(x){
-                                alpha.a <- mean.parms$alpha.a
-                                alpha.p <- x[2]
-                                alpha.f <- mean.parms$alpha.f
-                                beta.a.ex <- x[1]
-                                beta.p.ex <- mean.parms$beta.p.ex
-                                a <- x[3]
-                                p <- x[4]
-                                y <- rep(NA,2)
-                                #linear predictors:
-                                linp.ex <- exp(alpha.p + beta.p.ex)
-                                linp <- exp(alpha.p)
-                                linf <- exp(alpha.f)
-                                lina.ex <- exp(alpha.a + beta.a.ex)
-                                lina <- exp(alpha.a)
-                                #denominator
-                                den.ex <- 1 + linp.ex + linf + lina.ex
-                                den <- 1 + linp + linf + lina
-                                surv.ex <- 1/(den.ex) #daily survival probability for exclosed nests
-                                surv <- 1/den #daily survival probability for unexclosed nests
-                                #solve for beta.a.ex given a, with y[1] set to 0:
-                                y[1] <- ((lina.ex/den.ex)/(1-surv.ex))*(1-surv.ex^34)-a 
-                                #take equation p = (stuff) and substract p (make y[2] 0)
-                                y[2] <- ((linp/den)/(1-surv))*(1-surv^34)-p
-                                y[3] <- a-a
-                                y[4] <- p-p
-                                y
+                         #if values imported, import all parameters, not just aban.ex and pred.un
+                              if(input$import){
+                                validate(
+                                  need(!is.null(nestdata$nestdata), "Warning: No Data File Detected")
+                                                                  )
+                                traj.noEx <- lambda.calc(parms=parms.import(), sd.parms=sd.parms.import(), n.ex=0, n.iter=1000)
+                                traj.Ex <- lambda.calc(parms=parms.import(), sd.parms=sd.parms.import(), n.ex=1, n.iter=1000)
+                                
+                              } else {
+                                traj.noEx <- lambda.calc(parms=parms.scen(), sd.parms=sd.parms.scen(), n.ex=0, n.iter=1000)
+                                traj.Ex <- lambda.calc(parms=parms.scen(), sd.parms=sd.parms.scen(), n.ex=1, n.iter=1000)
+                                
                               }
-                              
-                              #supply 1 and -4 as initial parameter value guesses
-                              parm.est <- dfsane(c(1,-4,input$abanRisk/100,input$predRisk/100),back.calc)$par
-                              
-                              parms.scen <- reactive({
-                                list(
-                                  Na0 = (input$ScenPairs)/2,
-                                  Ns0 = (input$ScenPairs)/2,
-                                  yt=0.99,  #probability of third-year bird nesting
-                                  ys=0.68,  #probability of second-year bird nesting
-                                  Phij=0.52,  
-                                  Phia=0.74,
-                                  f=input$fledge/100,
-                                  m=input$mortality/200,
-                                  E = 0.94,
-                                  r2 = 0.7,
-                                  r3 = 0.7,
-                                  beta.a.ex = parm.est[1],
-                                  beta.p.ex = mean.parms$beta.p.ex,
-                                  alpha.a = mean.parms$alpha.a,
-                                  alpha.p = parm.est[2],
-                                  alpha.f = mean.parms$alpha.f
-                                ) })
-                              
-                              sd.parms.scen <- reactive({
-                                list(
-                                  vcovSurv=matrix(c((logodds(parms.scen()$Phij)*CV)^2,logodds(parms.scen()$Phij)*CV*logodds(parms.scen()$Phia)*CV, 
-                                                    logodds(parms.scen()$Phij)*CV*logodds(parms.scen()$Phia)*CV, (logodds(parms.scen()$Phia)*CV))^2,2,2),  #had sd in here earlier, not variance
-                                  sd.f = abs(logodds(parms.scen()$f))*0.06,
-                                  yt = logodds(parms.scen()$yt)*CV,
-                                  ys = logodds(parms.scen()$ys)*CV,
-                                  r2 = abs(logodds(parms.scen()$r2))*CV,
-                                  r3 = abs(logodds(parms.scen()$r3))*CV,
-                                  m = min(abs(logodds(parms.scen()$m))*1.04,abs(logodds(parms.scen()$m+0.01))*1.04),  #use 0.01 if value of 0 entered
-                                  alpha.f = sd.parms.init$alpha.f,
-                                  vcovAban = sd.parms.init$vcovAban,
-                                  vcovPred = sd.parms.init$vcovPred
-                                ) })
-                              
-                              traj.noEx <- lambda.calc(parms=parms.scen(), sd.parms=sd.parms.scen(), n.ex=0, n.iter=1000)
-                              traj.Ex <- lambda.calc(parms=parms.scen(), sd.parms=sd.parms.scen(), n.ex=1, n.iter=1000)
-                              
+                                
                               #calculate probabilities of decline and growth
                               decline.ex <- mean(traj.Ex$lambda<1)
                               decline.un <- mean(traj.noEx$lambda<1)
@@ -577,68 +694,78 @@ observeEvent(input$threshold.data, {
                               growth.steep.ex <-mean(traj.Ex$lambda>1.05)
                               growth.steep.un <-mean(traj.noEx$lambda>1.05)
                               
+                              #prepare output
+                              lambda.plot <- data.frame(
+                                Growth = c(traj.Ex$lambda[traj.Ex$lambda<2], traj.noEx$lambda[traj.noEx$lambda<2]), #remove extremes
+                                Exclosures = c(rep("Yes", length(traj.Ex$lambda[traj.Ex$lambda<2])), rep("No", length(traj.noEx$lambda[traj.noEx$lambda<2])))
+                              )
+                              
+                              #reorder factor level Yes/No for plotting
+                              lambda.plot$Exclosures <- factor(lambda.plot$Exclosures, levels(lambda.plot$Exclosures)[c(2,1)])
+                              
+                              
                               list(lambda.un=traj.noEx$lambda, lambda.ex=traj.Ex$lambda, decline.ex=decline.ex, 
                                    decline.un=decline.un, decline.steep.ex=decline.steep.ex, decline.steep.un=decline.steep.un,
                                    growth.ex=growth.ex, growth.un=growth.un, growth.steep.ex=growth.steep.ex, 
-                                   growth.steep.un=growth.steep.un, parm.est=parm.est)
+                                   growth.steep.un=growth.steep.un, parm.est=parm.est, lambda.plot=lambda.plot)
                             })
                         }#with progress
   )#event reactive
   
 
+####################################
+  
   #THRESHOLDS FOR SCENARIO####
-
+  parms.scen.t <- reactive({
+    list(
+      Na0 = (input$ScenPairs)/2,
+      Ns0 = (input$ScenPairs)/2,
+      yt=0.99,  #probability of third-year bird nesting
+      ys=0.68,  #probability of second-year bird nesting
+      Phij=0.52,  
+      Phia=0.74,
+      f=input$fledge/100,
+      m=input$mortality/200,
+      E = 0.94,
+      r2 = 0.7,
+      r3 = 0.7,
+      beta.a.ex = parm.est()$beta.a.ex,
+      beta.p.ex = mean.parms$beta.p.ex,
+      alpha.a = mean.parms$alpha.a,
+      alpha.p = parm.est()$alpha.p,
+      alpha.f = mean.parms$alpha.f
+    ) })
+  
+  sd.parms.scen.t <- reactive({
+    list(
+      vcovSurv=matrix(c((logodds(parms.scen.t()$Phij)*CV)^2,logodds(parms.scen.t()$Phij)*CV*logodds(parms.scen.t()$Phia)*CV, 
+                        logodds(parms.scen.t()$Phij)*CV*logodds(parms.scen.t()$Phia)*CV, (logodds(parms.scen.t()$Phia)*CV))^2,2,2),  #had sd in here earlier, not variance
+      sd.f = abs(logodds(parms.scen.t()$f))*0.06,
+      yt = logodds(parms.scen.t()$yt)*CV,
+      ys = logodds(parms.scen.t()$ys)*CV,
+      r2 = abs(logodds(parms.scen.t()$r2))*CV,
+      r3 = abs(logodds(parms.scen.t()$r3))*CV,
+      m = min(abs(logodds(parms.scen.t()$m))*1.04,abs(logodds(parms.scen.t()$m+0.01))*1.04),  #use 0.01 if value of 0 entered
+      alpha.f = sd.parms.init$alpha.f,
+      vcovAban = sd.parms.init$vcovAban,
+      vcovPred = sd.parms.init$vcovPred
+    ) })
+  
   scen.thresholds<-eventReactive(input$Scen.threshold.data, {
-    withProgress(message = "Calculating Thresholds...", {
-      
-      parms.scen.t <- reactive({
-        list(
-          Na0 = (input$ScenPairs)/2,
-          Ns0 = (input$ScenPairs)/2,
-          yt=0.99,  #probability of third-year bird nesting
-          ys=0.68,  #probability of second-year bird nesting
-          Phij=0.52,  
-          Phia=0.74,
-          f=input$fledge/100,
-          m=input$mortality/200,
-          E = 0.94,
-          r2 = 0.7,
-          r3 = 0.7,
-          beta.a.ex = scenario()$parm.est[1],
-          beta.p.ex = mean.parms$beta.p.ex,
-          alpha.a = mean.parms$alpha.a,
-          alpha.p = scenario()$parm.est[2],
-          alpha.f = mean.parms$alpha.f
-        ) })
-      
-      sd.parms.scen.t <- reactive({
-        list(
-          vcovSurv=matrix(c((logodds(parms.scen.t()$Phij)*CV)^2,logodds(parms.scen.t()$Phij)*CV*logodds(parms.scen.t()$Phia)*CV, 
-                            logodds(parms.scen.t()$Phij)*CV*logodds(parms.scen.t()$Phia)*CV, (logodds(parms.scen.t()$Phia)*CV))^2,2,2),  #had sd in here earlier, not variance
-          sd.f = abs(logodds(parms.scen.t()$f))*0.06,
-          yt = logodds(parms.scen.t()$yt)*CV,
-          ys = logodds(parms.scen.t()$ys)*CV,
-          r2 = abs(logodds(parms.scen.t()$r2))*CV,
-          r3 = abs(logodds(parms.scen.t()$r3))*CV,
-          m = min(abs(logodds(parms.scen.t()$m))*1.04,abs(logodds(parms.scen.t()$m+0.01))*1.04),  #use 0.01 if value of 0 entered
-          alpha.f = sd.parms.init$alpha.f,
-          vcovAban = sd.parms.init$vcovAban,
-          vcovPred = sd.parms.init$vcovPred
-        ) })
-      
+    withProgress(message = "Calculating Abandonment Thresholds...", {
       
       n.vals <- 200 #number of aban values to draw for use in simulations
       ni<-200 #number of iterations per draw
       #draw abandonment values
-      eta.a.vec <- runif(n.vals,-2,4)
-      eta.a.vec <- eta.a.vec[sort.list(eta.a.vec)] #sort from low to high; makes plotting later easier
+      beta.a.vec <- runif(n.vals,0,4)
+      beta.a.vec <- beta.a.vec[sort.list(beta.a.vec)] #sort from low to high; makes plotting later easier
       #define stuff
       lambda.mat.ex <- lambda.mat.un <- abans.ex <- matrix(NA, nrow=ni, ncol=n.vals)
       
       #run projection models
       for(i in 1:n.vals){ 
-        growth.ex <- lambda.calc(parms=parms.scen.t(), sd.parms=sd.parms.scen.t(), eta.a=eta.a.vec[i], n.ex=1, 
-                                 n.iter=ni)
+        growth.ex <- lambda.calc(parms=parms.scen.t(), sd.parms=sd.parms.scen.t(), n.ex=1, 
+                                 n.iter=ni, beta.a.add=beta.a.vec[i])
         lambda.mat.ex[,i] <- growth.ex$lambda
         abans.ex[,i] <- growth.ex$aban.counts.ex
         incProgress(1/n.vals) #progress bar for simulations 
@@ -655,15 +782,60 @@ observeEvent(input$threshold.data, {
       prob.curv <- smooth.spline(aban.ex.means, prob.decline)
       diffs <- abs(prob.curv$y-prob.decline.ref)
       aban.tolerance <- round(prob.curv$x[min(which(diffs[]==min(diffs)))],0)
+
       #package data for output  
       list(prob.decline=prob.decline, prob.decline.ref=prob.decline.ref, aban.ex.means=aban.ex.means, prob.curv=prob.curv,
            aban.tolerance=aban.tolerance)
     }) #scen.thresholds withProgress
-  }) #scen.thresholds 
+  }) #scen.thresholds - abandonment
+  
+
+#Scenario - Predation Threshold####
+  scen.pred.thresholds<-eventReactive(input$scen.threshold.pred.data, {
+    withProgress(message = "Calculating Predation Thresholds...", {
+      n.vals <- 200 #number of aban values to draw for use in simulations
+      ni<-200 #number of iterations per draw
+      
+      #draw values
+      eta.p.vec <- runif(n.vals,-2,2)
+      eta.p.vec <- eta.p.vec[sort.list(eta.p.vec)] #sort from low to high; makes plotting later easier
+      #define stuff
+      lambda.mat.ex <- lambda.mat.un <- preds.un <- matrix(NA, nrow=ni, ncol=n.vals)
+      
+      #run projection models
+      for(i in 1:n.vals){ 
+        growth.un <- lambda.calc(parms=parms.scen.t(), sd.parms=sd.parms.scen.t(), n.ex=0, 
+                                 eta.p = eta.p.vec[i], n.iter=ni)
+        lambda.mat.un[,i] <- growth.un$lambda
+        preds.un[,i] <- growth.un$pred.counts.un
+        incProgress(1/n.vals) #progress bar for simulations 
+      }
+      #summarize data  
+      ref.line <- lambda.calc(parms=parms.scen.t(), sd.parms=sd.parms.scen.t(),   
+                              n.ex=1, n.iter=ni) #exclosed reference
+      preds.un.means <- colMeans(preds.un)
+      prob.decline <- prob.decline.ref <- rep(NA, n.vals)
+      prob.decline.ref <- mean(ref.line$lambda[]<1)
+      for (i in 1:n.vals){
+        prob.decline[i] <- length(which(lambda.mat.un[,i]<1))/ni 
+      }
+      prob.curv <- smooth.spline(preds.un.means, prob.decline)
+      diffs <- abs(prob.curv$y-prob.decline.ref)
+      pred.tolerance <- round(prob.curv$x[min(which(diffs[]==min(diffs)))],0)
+      #package data for output  
+      list(prob.decline=prob.decline, prob.decline.ref=prob.decline.ref, preds.un.means=preds.un.means, prob.curv=prob.curv,
+           pred.tolerance=pred.tolerance)
+    }) #thresholds withProgress
+  }) #scen.thresholds.pred 
+  
+ 
   #########################################################################################################
+#Scenario thresholds summaries####
   
   scen.thresh.summary <- reactiveValues(prob.decline=NA, prob.decline.ref=NA, 
-                                        aban.ex.means=NA, prob.curv=NA,aban.tolerance=NA)  
+                                        aban.ex.means=NA, prob.curv=NA,aban.tolerance=NA)
+  scen.thresh.pred.summary <- reactiveValues(prob.decline=NA, prob.decline.ref=NA, preds.un.means=NA, 
+                                             prob.curv=NA,pred.tolerance=NA)  
   
   observeEvent(input$Scen.threshold.data, {
     if(input$Scen.threshold.data) {
@@ -672,6 +844,16 @@ observeEvent(input$threshold.data, {
       scen.thresh.summary$aban.tolerance <- scen.thresholds()$aban.tolerance
     }
   })  
+  
+  observeEvent(input$scen.threshold.pred.data,{
+    if(input$scen.threshold.pred.data){
+      scen.thresh.pred.summary$prob.decline <- scen.pred.thresholds()$prob.decline; 
+      scen.thresh.pred.summary$prob.decline.ref <- scen.pred.thresholds()$prob.decline.ref;
+      scen.thresh.pred.summary$preds.un.means <- scen.pred.thresholds()$preds.un.means; 
+      scen.thresh.pred.summary$prob.curv <- scen.pred.thresholds()$prob.curv;
+      scen.thresh.pred.summary$pred.tolerance <- scen.pred.thresholds()$pred.tolerance
+    }
+  })
     
 ###############################################################################################################
   
@@ -733,8 +915,6 @@ observeEvent(input$threshold.data, {
     
   })
   
-
-  
 #Bayesian nest fate analysis summary output####  
   output$hatch.ex<-renderText({paste(round(survival()$Fate.est$Hatch.Ex, digits=2)*100,"(",
                                      round(survival()$Fate.SD$Hatch.Ex, 2)*100, ") %")})
@@ -779,70 +959,17 @@ observeEvent(input$threshold.data, {
                                      round(survival()$Fate.SD$Flood, 2)*100, ") %")
     }
   })
-  
-  #3D heat plot####
-  site.pt <- c(0,0)
-  output$ThreeDplot <- renderPlot({
 
-    graph <- persp(x,y,z, expand=0.9,mar=c(10,1,0,2),
-                   zlab="", xlab="",ylab="", border=NA,
-                   phi=20,theta=30, ticktype="detailed", col=color[facetcol])
-    x.label <- c("Abandonment Probability")
-    x.label2 <- c("with Exclosures")
-    y.label <- c("Predation Probability")
-    y.label2 <- c("without Exclosures")
-    x.label.pos <- trans3d(0.1, -0.1, -1.1, pmat=graph)
-    x.label2.pos <- trans3d(0.1,-0.18,-1.15,pmat=graph)
-    y.label.pos <- trans3d(0.6, 0.1, -1.05, pmat=graph)
-    y.label2.pos <- trans3d(0.64, 0.1, -1.1, pmat=graph)
-    text(x.label.pos$x,x.label.pos$y,labels=x.label, srt=-25, cex=1.2, adj=c(0,NA), xpd=T)
-    text(x.label2.pos$x,x.label2.pos$y,labels=x.label2,srt=-25,cex=1.2,adj=c(0,NA),xpd=T)
-    text(y.label.pos$x, y.label.pos$y, labels=y.label, srt=60, cex=1.2, adj=c(0,NA), xpd=T)
-    text(y.label2.pos$x, y.label2.pos$y, labels=y.label2, srt=60, cex=1.2, adj=c(0,NA), xpd=T)
-    z.label <- ("Gain in Growth Rate")
-    z.label2 <- ("with Exclosures")
-    z.label.pos <- trans3d(-0.2, 0, 0.2, pmat=graph)
-    z.label2.pos <- trans3d(-0.25,-0.03,0.2, pmat=graph)
-    text(z.label.pos$x, z.label.pos$y, labels=z.label, srt=-82, cex=1.2, adj=c(0,NA), xpd=T)
-    text(z.label2.pos$x, z.label2.pos$y, labels=z.label2, srt=-82, cex=1.2, adj=c(0,NA), xpd=T)
-    no.effect.line <- contourLines(x, y, z, nlevels=1, level=0)
-    no.effect <- trans3d(no.effect.line[[1]]$x, no.effect.line[[1]]$y, rep(0, length(no.effect.line[[1]]$x)), pmat=graph)
-    lines(no.effect)
-    
-    if(input$analyze.go) { #add site-specific estimates
-    site.pt <- c(survival()$Fate.est$Aban.Ex, survival()$Fate.est$Pred.Un)
-    xval<-which.min(abs(x-site.pt[1]))
-    yval<-which.min(abs(y-site.pt[2]))
-    zval<-z[xval,yval]
-    add.pts<-trans3d(x[xval],y[yval],zval,pmat=graph)
-    points(add.pts, pch=19,col="black")
-    site.pos <- trans3d(site.pt[1]+0.05, site.pt[2]+0.05, zval, pmat=graph)
-    text(site.pos,labels=c("Your Site"), adj=c(0,NA), cex=2)
-    #variance ellipse
-    var.points<-ellipse(site.pt,shape=matrix(c(survival()$Fate.SD$Aban.Ex^2,0,0,survival()$Fate.SD$Pred.Un^2),nrow=2,byrow=T), 
-                        radius=1)
-    var.z <- predict(lambda.loess2, newdata = var.points) #get z values for ellipse
-    var.points.trans <- trans3d(var.points[,1], var.points[,2], z=(var.z+0.01), pmat=graph)
-    lines(var.points.trans)
-    }
-  })
-  
+
   #lambda plot####
-  output$lambdaplot<-renderPlot({ 
-    plot(c(1,3), c(mean(trajectory()$lambda.ex), mean(trajectory()$lambda.un)), xlim=c(0,4), 
-         ylim=c(
-           min(quantile(trajectory()$lambda.ex,0.025),quantile(trajectory()$lambda.un, 0.025))-0.05, 
-           max(quantile(trajectory()$lambda.ex,0.975),quantile(trajectory()$lambda.un, 0.975)+0.05)
-         ),
-         ylab="Population Growth Rate", xlab="", pch=c(15,0), lwd=2, cex=2, xaxt="n", cex.lab=1.5)
-    axis(1, at=c(1,3), labels=c("Exclosures", "No Exclosures"), cex.axis=1.5)
-    lines(c(1,1), c(quantile(trajectory()$lambda.ex,0.975), quantile(trajectory()$lambda.ex, 0.025)), lwd=2)
-    lines(c(3,3), c(quantile(trajectory()$lambda.un,0.975), quantile(trajectory()$lambda.un, 0.025)), lwd=2)
-    lines(c(1+0.05,1-0.05), c(quantile(trajectory()$lambda.ex,0.975), quantile(trajectory()$lambda.ex, 0.975)), lwd=2)
-    lines(c(1+0.05,1-0.05), c(quantile(trajectory()$lambda.ex,0.025), quantile(trajectory()$lambda.ex, 0.025)), lwd=2)
-    lines(c(3+0.05,3-0.05), c(quantile(trajectory()$lambda.un,0.975), quantile(trajectory()$lambda.un, 0.975)), lwd=2)
-    lines(c(3+0.05,3-0.05), c(quantile(trajectory()$lambda.un,0.025), quantile(trajectory()$lambda.un, 0.025)), lwd=2)
-    abline(h=1)
+
+  output$lambdaplot<-renderPlot({
+    ggplot(trajectory()$lambda.plot, aes(x=Exclosures, y=Growth)) +
+      geom_violin(fill="grey") + 
+      stat_summary(fun.y=mean, geom="point", shape=18, size=4) +
+      theme(axis.text=element_text(size=12),
+           axis.title=element_text(size=14, face="bold")) +
+      geom_hline(yintercept = 1)
   })
   
   #lambda probabilities####
@@ -855,16 +982,13 @@ observeEvent(input$threshold.data, {
   output$growthSteepEx <- renderText({paste(round(trajectory()$growth.steep.ex*100,0), "%")})
   output$growthSteepUn <- renderText({paste(round(trajectory()$growth.steep.un*100,0), "%")})
   
-  
-  
   traj.probs <- reactiveValues(
-    mat = matrix(rep(NA,8), nrow=4, ncol = 2, byrow=T, dimnames = list(c("Rapid Growth", "Growth", 
-                                                                         "Decline", "Rapid Decline"),
-                                                                       c("With Exclosures", "Without Exclosures")))
+    mat = matrix(rep(NA,8), nrow=4, ncol = 2, byrow=T, 
+                 dimnames = list(c("Rapid Growth", "Growth", "Decline", "Rapid Decline"), c("With Exclosures", "Without Exclosures")))
   )
   
-  observeEvent(input$button, {
-    if(input$button) {
+  observeEvent(input$analyze.go, {
+    if(input$analyze.go) {
       traj.probs$mat[1,1] <- paste(round(trajectory()$growth.steep.ex*100,0), "%")
       traj.probs$mat[1,2] <- paste(round(trajectory()$growth.steep.un*100,0), "%")
       traj.probs$mat[2,1] <- paste(round(trajectory()$growth.ex*100,0), "%")
@@ -877,7 +1001,7 @@ observeEvent(input$threshold.data, {
   })
   
   
-  #thresholds plot####
+  #thresholds plots####
   
   output$thresh.abans <- renderPlot({
     par(mar=c(5,5,4,2)+0.1)
@@ -900,37 +1024,67 @@ observeEvent(input$threshold.data, {
   output$reassess <- renderText({paste("Reassess or pull exclosures after ", thresholds()$aban.tolerance, 
                                        "observed nest abandonments")})
   
+  output$thresh.preds <- renderPlot({
+    par(mar=c(5,5,4,2)+0.1)
+    plot(x=NULL, y=NULL, xlab="Number of Predations",
+         ylab="Probability of Population Decline", ylim=c(0,1), xlim=c(0, max(pred.thresholds()$preds.un.means)), 
+         xaxt = "n")
+    axis(1, at=seq(0,max(pred.thresholds()$preds.un.means),by=1))
+    prob.curv <- smooth.spline(pred.thresholds()$preds.un.means, pred.thresholds()$prob.decline)
+    lines(pred.thresholds()$prob.curv, lwd=2)
+    if (length(pred.thresholds()$prob.curv$y)>=n.vals) {y.coord <- pred.thresholds()$prob.curv$y[1:200]} else 
+    {y.coord <- c(pred.thresholds()$prob.curv$y[1:(n.vals-length(pred.thresholds()$prob.curv$y))], pred.thresholds()$prob.curv)}
+    polygon(c(pred.thresholds()$preds.un.means[1], pred.thresholds()$preds.un.means, pred.thresholds()$preds.un.means[n.vals]), 
+            c(0,y.coord,0), density=10, angle=45)
+    abline(h=pred.thresholds()$prob.decline.ref, lty=2, lwd=2)
+    par(xpd=T)
+    legend("topright", c("Unexclosed", "Exclosed Reference"), xpd=T, lty=c(1,2), lwd=c(2,2), adj=c(0,NA)) 
+    
+  })
+  
+  output$reassess.pred <- renderText({paste("Reassess or put up exclosures after ", pred.thresholds()$pred.tolerance, 
+                                            "observed nest predations")})
   #scenario modeling output####
   #resettable slider values####
+ 
+  start.val <- reactiveValues(Pred=36, Aban=6, M=70, f=40)
+  
+  observeEvent(input$import,{
+    start.val$Pred <- survival()$Fate.est$Pred.Un*100
+    start.val$Aban <- survival()$Fate.est$Aban.Ex*100
+  })
+  
+  observeEvent(input$reset_input,{
+    start.val$Pred <- 36
+    start.val$Aban <- 6
+    start.val$M <- 70
+   start.val$f <- 40
+  })
+  
   output$resettableScenarioValues <- renderUI({
-    times <- input$reset_input
-    div(id=letters[(times %% length(letters)) + 1],
-        sliderInput("predRisk", "Predation Probability without Exclosures", min = 0, max = 99, value = 36), #average values for defaults
-        sliderInput("abanRisk", "Abandonment Probability with Exclosures", min = 0, max = 99, value = 6),
-        sliderInput("mortality", "Mortality Probability Given Abandonment", min = 0, max = 100, value = 70),
-        sliderInput("fledge","Chick Survival Probability (Hatch to Fledge)", min=1, max=99, value=40))
+    div(id="values",
+        sliderInput("predRisk", "Predation Probability without Exclosures",
+                    min = 0, max = 99, value = start.val$Pred), 
+        sliderInput("abanRisk", "Abandonment Probability with Exclosures", 
+                    min = 0, max = 99, value = start.val$Aban),
+        sliderInput("mortality", "Mortality Probability Given Abandonment", 
+                    min = 0, max = 100, value = start.val$M),
+        sliderInput("fledge","Chick Survival Probability (Hatch to Fledge)",
+                    min=1, max=99, value=start.val$f) )
   })
   
-   
-  #plot
-  output$scenLambdaPlot<-renderPlot({ 
-    plot(c(1,3), c(mean(scenario()$lambda.ex), mean(scenario()$lambda.un)), xlim=c(0,4), 
-         ylim=c(
-           min(quantile(scenario()$lambda.ex,0.025),quantile(scenario()$lambda.un, 0.025))-0.05, 
-           max(quantile(scenario()$lambda.ex,0.975),quantile(scenario()$lambda.un, 0.975)+0.05)
-         ),
-         ylab="Population Growth Rate", xlab="", pch=c(15,0), lwd=2, cex=2, xaxt="n", cex.lab=1.5)
-    axis(1, at=c(1,3), labels=c("Exclosures", "No Exclosures"), cex.axis=1.5)
-    lines(c(1,1), c(quantile(scenario()$lambda.ex,0.975), quantile(scenario()$lambda.ex, 0.025)), lwd=2)
-    lines(c(3,3), c(quantile(scenario()$lambda.un,0.975), quantile(scenario()$lambda.un, 0.025)), lwd=2)
-    lines(c(1+0.05,1-0.05), c(quantile(scenario()$lambda.ex,0.975), quantile(scenario()$lambda.ex, 0.975)), lwd=2)
-    lines(c(1+0.05,1-0.05), c(quantile(scenario()$lambda.ex,0.025), quantile(scenario()$lambda.ex, 0.025)), lwd=2)
-    lines(c(3+0.05,3-0.05), c(quantile(scenario()$lambda.un,0.975), quantile(scenario()$lambda.un, 0.975)), lwd=2)
-    lines(c(3+0.05,3-0.05), c(quantile(scenario()$lambda.un,0.025), quantile(scenario()$lambda.un, 0.025)), lwd=2)
-    abline(h=1)
+
+  #lambda plot
+  output$scenLambdaPlot<-renderPlot({
+    ggplot(scenario()$lambda.plot, aes(x=Exclosures, y=Growth)) +
+      geom_violin(fill="grey") + 
+      stat_summary(fun.y=mean, geom="point", shape=18, size=4) +
+      theme(axis.text=element_text(size=12),
+            axis.title=element_text(size=14, face="bold")) +
+      geom_hline(yintercept = 1)
   })
   
-  scen.summary <- reactiveValues(lambda.ex=NA, lambda.un=NA)
+  scen.summary <- reactiveValues(lambda.ex=NA, lambda.un=NA, Exclosures = NA, Growth = NA)
 
   observeEvent(input$scenario, {
     if(input$scenario) {
@@ -967,7 +1121,7 @@ observeEvent(input$threshold.data, {
   })
   
   
-  #scenario thresholds plot####
+  #scenario thresholds plots####
   
   output$scen.thresh.abans <- renderPlot({
     par(mar=c(5,5,4,2)+0.1)
@@ -990,7 +1144,26 @@ observeEvent(input$threshold.data, {
   output$SCENreassess <- renderText({paste("Reassess or pull exclosures after ", scen.thresholds()$aban.tolerance, 
                                        "observed nest abandonments")})
   
+  output$scen.thresh.preds <- renderPlot({
+    par(mar=c(5,5,4,2)+0.1)
+    plot(x=NULL, y=NULL, xlab="Number of Predations",
+         ylab="Probability of Population Decline", ylim=c(0,1), xlim=c(0, max(scen.pred.thresholds()$preds.un.means)), 
+         xaxt = "n")
+    axis(1, at=seq(0,max(scen.pred.thresholds()$preds.un.means),by=1))
+    prob.curv <- smooth.spline(scen.pred.thresholds()$preds.un.means, scen.pred.thresholds()$prob.decline)
+    lines(scen.pred.thresholds()$prob.curv, lwd=2)
+    if (length(scen.pred.thresholds()$prob.curv$y)>=n.vals) {y.coord <- scen.pred.thresholds()$prob.curv$y[1:200]} else 
+    {y.coord <- c(scen.pred.thresholds()$prob.curv$y[1:(n.vals-length(scen.pred.thresholds()$prob.curv$y))], scen.pred.thresholds()$prob.curv)}
+    polygon(c(scen.pred.thresholds()$preds.un.means[1], scen.pred.thresholds()$preds.un.means, scen.pred.thresholds()$preds.un.means[n.vals]), 
+            c(0,y.coord,0), density=10, angle=45)
+    abline(h=scen.pred.thresholds()$prob.decline.ref, lty=2, lwd=2)
+    par(xpd=T)
+    legend("topright", c("Uxclosed", "Exclosed Reference"), xpd=T, lty=c(1,2), lwd=c(2,2), adj=c(0,NA)) 
+    
+  })
   
+  output$scen.reassess.pred <- renderText({paste("Reassess or put up exclosures after ", scen.pred.thresholds()$pred.tolerance, 
+                                                 "observed nest predations")})
   
 #REPORT####
   output$Report <- downloadHandler(
@@ -1007,13 +1180,21 @@ observeEvent(input$threshold.data, {
         summary<-as.data.frame(input.summary())
      # if(input$NestFate) {fate.include=1} else {fate.include=0}
         
-      if(!is.na(lambda.summary$lambda.ex)) {plot.include=1} else {plot.include=0}
+      if(!is.na(lambda.summary$lambda.ex)) {plot.include=1} 
+        else {plot.include=0}
+      if(!is.na(lambda.summary$lambda.un)){
+        lambda.export <- as.data.frame(trajectory()$lambda.plot)
+      }
+       
         
-      if(!is.na(thresh.summary$prob.curv)) {thresh.include=1} else {thresh.include=0}
- 
-      params <- list(summary=summary, lambda.ex=lambda.summary$lambda.ex, lambda.un=lambda.summary$lambda.un, 
-                     plot.include=plot.include, thresh.include=thresh.include, thresholds=thresh.summary,
-                      Fate.summary=Fate.summary$mat,  traj.probs=traj.probs$mat, N0=input$Pairs)
+      if(!is.na(thresh.aban.summary$prob.curv)) {thresh.include=1} else {thresh.include=0}
+      if(!is.na(thresh.pred.summary$prob.curv)) {thresh.pred.include=1} else {thresh.pred.include=0}
+        
+      params <- list(summary=summary, 
+                     plot.include=plot.include, thresh.include=thresh.include, thresh.pred.include=thresh.pred.include,
+                     thresholds=thresh.aban.summary, lambda.export=lambda.export,
+                      Fate.summary=Fate.summary$mat,  traj.probs=traj.probs$mat, N0=input$Pairs,
+                     pred.thresholds=thresh.pred.summary)
       # Knit the document, passing in the `params` list, and eval it in a
       # child of the global environment (this isolates the code in the document
       # from the code in this app).
@@ -1039,12 +1220,19 @@ observeEvent(input$threshold.data, {
       # if(input$NestFate) {fate.include=1} else {fate.include=0}
       
       if(!is.na(lambda.summary$lambda.ex)) {plot.include=1} else {plot.include=0}
+      if(!is.na(lambda.summary$lambda.un)){
+        lambda.export <- as.data.frame(trajectory()$lambda.plot)
+      }
       
-      if(!is.na(thresh.summary$prob.curv)) {thresh.include=1} else {thresh.include=0}
+      if(!is.na(thresh.aban.summary$prob.curv)) {thresh.include=1} else {thresh.include=0}
+      if(!is.na(thresh.pred.summary$prob.curv)) {thresh.pred.include=1} else {thresh.pred.include=0}
       
-      params <- list(summary=summary, lambda.ex=lambda.summary$lambda.ex, lambda.un=lambda.summary$lambda.un, 
-                     plot.include=plot.include, thresh.include=thresh.include, thresholds=thresh.summary,
-                     Fate.summary=Fate.summary$mat,  traj.probs=traj.probs$mat, N0=input$Pairs)
+      
+      params <- list(summary=summary, lambda.export=lambda.export, plot.include=plot.include,
+                      thresh.include=thresh.include, thresh.pred.include=thresh.pred.include,
+                     thresholds=thresh.aban.summary, 
+                     Fate.summary=Fate.summary$mat,  traj.probs=traj.probs$mat, N0=input$Pairs,
+                     pred.thresholds=thresh.pred.summary)
       # Knit the document, passing in the `params` list, and eval it in a
       # child of the global environment (this isolates the code in the document
       # from the code in this app).
@@ -1063,13 +1251,20 @@ observeEvent(input$threshold.data, {
       file.copy("ScenReport.Rmd", tempReport, overwrite = TRUE)
 
       if(!is.na(scen.thresh.summary$prob.curv)) {scen.thresh.include=1} else {scen.thresh.include=0}
+      if(!is.na(scen.thresh.pred.summary$prob.curv)) {thresh.pred.include=1} else {thresh.pred.include=0}
       
       if(!is.na(scen.summary$lambda.ex)) {scen.include=1} else {scen.include=0}
       
+      if(!is.na(scen.summary$lambda.un)){
+        lambda.export <- as.data.frame(scenario()$lambda.plot)
+      }
+      
       params <- list(aban.choose=input$abanRisk, fledge.choose=input$fledge,
                      pred.choose=input$predRisk, mort.choose = input$mortality, scen.include=scen.include,
-                     scenario=scen.summary, scen.traj.probs=scen.traj.probs$mat, N0=input$ScenPairs,
-                     thresh.include=scen.thresh.include, thresholds=scen.thresh.summary)
+                     scen.traj.probs=scen.traj.probs$mat, N0=input$ScenPairs,
+                     thresh.include=scen.thresh.include, thresholds=scen.thresh.summary,
+                     lambda.export=lambda.export, thresh.pred.include=thresh.pred.include, 
+                     pred.thresholds = scen.thresh.pred.summary)
       # Knit the document, passing in the `params` list, and eval it in a
       # child of the global environment (this isolates the code in the document
       # from the code in this app).
@@ -1088,13 +1283,21 @@ observeEvent(input$threshold.data, {
       file.copy("ScenReportWord.Rmd", tempReport, overwrite = TRUE)
       
       if(!is.na(scen.thresh.summary$prob.curv)) {scen.thresh.include=1} else {scen.thresh.include=0}
+      if(!is.na(scen.thresh.pred.summary$prob.curv)) {thresh.pred.include=1} else {thresh.pred.include=0}
+      
       
       if(!is.na(scen.summary$lambda.ex)) {scen.include=1} else {scen.include=0}
+      if(!is.na(scen.summary$lambda.un)){
+        lambda.export <- as.data.frame(scenario()$lambda.plot)
+      }
       
       params <- list(aban.choose=input$abanRisk, fledge.choose=input$fledge,
                      pred.choose=input$predRisk, mort.choose = input$mortality, scen.include=scen.include,
-                     scenario=scen.summary, scen.traj.probs=scen.traj.probs$mat, N0=input$ScenPairs,
-                     thresh.include=scen.thresh.include, thresholds=scen.thresh.summary)
+                     scen.traj.probs=scen.traj.probs$mat, N0=input$ScenPairs,
+                     thresh.include=scen.thresh.include, thresholds=scen.thresh.summary,
+                     lambda.export=lambda.export, thresh.pred.include=thresh.pred.include, 
+                     pred.thresholds = scen.thresh.pred.summary
+                     )
       # Knit the document, passing in the `params` list, and eval it in a
       # child of the global environment (this isolates the code in the document
       # from the code in this app).
